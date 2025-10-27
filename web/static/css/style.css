@@ -1,0 +1,321 @@
+/*
+ * Smart Security System - Dashboard Styles
+ * Custom CSS for dashboard interface
+ */
+
+/* ==================== */
+/* Global Styles */
+/* ==================== */
+
+:root {
+    --color-armed: #198754;
+    --color-disarmed: #6c757d;
+    --color-alarm: #dc3545;
+    --color-warning: #ffc107;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.container-fluid {
+    flex: 1;
+}
+
+/* ==================== */
+/* Video Stream */
+/* ==================== */
+
+#video-stream {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #000;
+}
+
+/* Stream container for overlay positioning */
+.card-body.p-0.bg-dark {
+    position: relative;
+}
+
+/* Stream timestamp overlay */
+#stream-timestamp {
+    font-size: 0.9rem;
+}
+
+/* ==================== */
+/* System Status Badge */
+/* ==================== */
+
+#system-status.bg-success {
+    background-color: var(--color-armed) !important;
+}
+
+#system-status.bg-danger {
+    background-color: var(--color-alarm) !important;
+}
+
+#system-status.bg-secondary {
+    background-color: var(--color-disarmed) !important;
+}
+
+/* Pulsing animation for alarm state */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+#system-status.alarm {
+    animation: pulse 1s infinite;
+}
+
+/* ==================== */
+/* Control Buttons */
+/* ==================== */
+
+#btn-arm, #btn-disarm {
+    transition: all 0.3s ease;
+}
+
+#btn-arm:hover {
+    transform: scale(1.05);
+}
+
+#btn-disarm:hover {
+    transform: scale(1.05);
+}
+
+#btn-arm:disabled, #btn-disarm:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+/* ==================== */
+/* System State Alert */
+/* ==================== */
+
+#system-state-alert.alert-success {
+    background-color: rgba(25, 135, 84, 0.1);
+    border-color: var(--color-armed);
+    color: var(--color-armed);
+}
+
+#system-state-alert.alert-danger {
+    background-color: rgba(220, 53, 69, 0.1);
+    border-color: var(--color-alarm);
+    color: var(--color-alarm);
+}
+
+#system-state-alert.alert-secondary {
+    background-color: rgba(108, 117, 125, 0.1);
+    border-color: var(--color-disarmed);
+    color: var(--color-disarmed);
+}
+
+/* ==================== */
+/* Progress Bars */
+/* ==================== */
+
+.progress {
+    height: 20px;
+}
+
+.progress-bar {
+    transition: width 0.5s ease;
+}
+
+/* CPU: Green < 70%, Yellow < 85%, Red >= 85% */
+#cpu-progress.bg-success { background-color: #198754 !important; }
+#cpu-progress.bg-warning { background-color: #ffc107 !important; }
+#cpu-progress.bg-danger { background-color: #dc3545 !important; }
+
+/* Temperature: Green < 60°C, Yellow < 75°C, Red >= 75°C */
+#temp-progress.bg-success { background-color: #198754 !important; }
+#temp-progress.bg-warning { background-color: #ffc107 !important; }
+#temp-progress.bg-danger { background-color: #dc3545 !important; }
+
+/* ==================== */
+/* Statistics */
+/* ==================== */
+
+#stat-total {
+    font-size: 2.5rem;
+    font-weight: bold;
+}
+
+#stat-person, #stat-animal {
+    font-size: 1.8rem;
+    font-weight: bold;
+}
+
+/* ==================== */
+/* Detections Table */
+/* ==================== */
+
+#detections-table tbody tr {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+#detections-table tbody tr:hover {
+    background-color: rgba(0, 123, 255, 0.1);
+}
+
+/* Detection type badges */
+.badge-person {
+    background-color: var(--color-alarm) !important;
+}
+
+.badge-animal {
+    background-color: var(--color-armed) !important;
+}
+
+.badge-both {
+    background-color: var(--color-warning) !important;
+    color: #000;
+}
+
+/* ==================== */
+/* Cards */
+/* ==================== */
+
+.card {
+    border-radius: 10px;
+    border: none;
+}
+
+.card-header {
+    border-radius: 10px 10px 0 0 !important;
+}
+
+/* ==================== */
+/* Loading States */
+/* ==================== */
+
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Spinner for loading states */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+    border-width: 0.15rem;
+}
+
+/* ==================== */
+/* Responsive Adjustments */
+/* ==================== */
+
+@media (max-width: 992px) {
+    #video-stream {
+        max-height: 400px;
+    }
+
+    #stat-total {
+        font-size: 2rem;
+    }
+
+    #stat-person, #stat-animal {
+        font-size: 1.5rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .navbar-brand {
+        font-size: 1rem;
+    }
+
+    #video-stream {
+        max-height: 300px;
+    }
+
+    .card {
+        margin-bottom: 1rem !important;
+    }
+}
+
+/* ==================== */
+/* Animations */
+/* ==================== */
+
+/* Fade in animation for new elements */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease;
+}
+
+/* Slide in from right for alerts */
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.slide-in-right {
+    animation: slideInRight 0.5s ease;
+}
+
+/* ==================== */
+/* Toast Notifications */
+/* ==================== */
+
+/* TODO: Implement toast styles when adding notifications */
+.toast {
+    border-radius: 10px;
+}
+
+/* ==================== */
+/* Footer */
+/* ==================== */
+
+footer {
+    margin-top: auto;
+}
+
+footer a {
+    text-decoration: none;
+}
+
+footer a:hover {
+    text-decoration: underline;
+}
+
+/* ==================== */
+/* Utility Classes */
+/* ==================== */
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.text-shadow {
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* ==================== */
+/* Print Styles */
+/* ==================== */
+
+@media print {
+    #video-stream,
+    #btn-arm,
+    #btn-disarm,
+    .navbar,
+    footer {
+        display: none !important;
+    }
+}

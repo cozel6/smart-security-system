@@ -1,0 +1,62 @@
+# ==========================================
+# SMART SECURITY SYSTEM - DEPENDENCIES
+# ==========================================
+# Python 3.9+ required
+
+# Core Computer Vision
+opencv-python==4.8.1.78
+numpy==1.24.3
+Pillow==10.1.0
+
+# AI/ML - YOLO Object Detection
+ultralytics==8.0.200
+torch==2.1.0
+torchvision==0.16.0
+
+# Telegram Bot
+python-telegram-bot==20.6
+python-telegram-bot[job-queue]==20.6
+
+# Web Server & Streaming
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# GPIO Control (Raspberry Pi)
+RPi.GPIO==0.7.1
+
+# Configuration Management
+python-dotenv==1.0.0
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Testing (optional - for Milestone 7)
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Development Tools (optional)
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.0
+
+# ==========================================
+# INSTALLATION NOTES
+# ==========================================
+#
+# 1. Create virtual environment:
+#    python3 -m venv venv
+#    source venv/bin/activate  # Linux/Mac
+#    venv\Scripts\activate     # Windows
+#
+# 2. Install dependencies:
+#    pip install -r requirements.txt
+#
+# 3. For Raspberry Pi, you may need to install system packages first:
+#    sudo apt-get update
+#    sudo apt-get install -y python3-opencv python3-picamera
+#
+# 4. Download YOLO model (will be done automatically on first run):
+#    Model will be downloaded to models/ directory
+#
+# ==========================================
