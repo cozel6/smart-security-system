@@ -1,0 +1,45 @@
+# ==========================================
+# DEVELOPMENT DEPENDENCIES (macOS/Windows)
+# ==========================================
+# For development on non-Raspberry Pi systems
+# Use: pip install -r requirements-dev.txt
+
+# Core Computer Vision
+opencv-python==4.8.1.78
+numpy==1.24.3
+Pillow==10.1.0
+
+# AI/ML - YOLO Object Detection
+ultralytics==8.0.200
+torch==2.1.0
+torchvision==0.16.0
+
+# Telegram Bot
+python-telegram-bot==20.6
+python-telegram-bot[job-queue]==20.6
+
+# Web Server & Streaming
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# Configuration Management
+python-dotenv==1.0.0
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
+psutil==5.9.6
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Development Tools
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.0
+
+# ==========================================
+# NOTE: RPi.GPIO is excluded for development
+# Hardware simulation/mocking will be needed
+# ==========================================
