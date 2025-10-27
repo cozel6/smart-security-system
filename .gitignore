@@ -49,6 +49,9 @@ models/*.onnx
 models/*.weights
 !models/.gitkeep
 
+# Private Documentation (local only, not for GitHub)
+PROJECT_DOCUMENTATION.md
+
 snapshots/*.jpg
 snapshots/*.png
 snapshots/*.jpeg
