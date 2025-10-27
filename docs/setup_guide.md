@@ -77,7 +77,7 @@ sudo apt-get install -y git python3-pip python3-venv
 cd ~
 
 # Clone repository
-git clone <repository-url> smart-security-system
+git clone https://github.com/cozel6/smart-security-system.git
 cd smart-security-system
 ```
 

@@ -11,4 +11,5 @@ This package contains all core modules for the intelligent security system:
 """
 
 __version__ = "1.0.0"
-__author__ = "Your Name"
+__authors__ = ["Cosmin", "Matei Daniel"]
+__project__ = "MIPE Faculty Project 2024-2025"

@@ -1,8 +1,11 @@
 # SISTEM DE SECURITATE INTELIGENT
 ## Detectare Automată OM vs ANIMAL cu Alertare Remote
 
-**Echipă:** 2 persoane  
-**Perioadă:** 25 Octombrie 2024 - Ianuarie 2025 (12 săptămâni)  
+**Echipă:**
+- **Cosmin** - [@cozel6](https://github.com/cozel6)
+- **Matei Daniel** - _GitHub: în curs de configurare_
+
+**Perioadă:** 25 Octombrie 2024 - Ianuarie 2025 (12 săptămâni)
 **Platform:** Raspberry Pi 4 2GB
 
 ---

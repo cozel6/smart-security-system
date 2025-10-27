@@ -49,7 +49,7 @@ Sistem inteligent de securitate care rulează pe Raspberry Pi 4, folosind viziun
 ### 1. Clonare Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/cozel6/smart-security-system.git
 cd smart-security-system
 ```
 
@@ -247,7 +247,10 @@ wget https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt
 
 ## 👥 Echipă
 
-**Echipă Proiect:** 2 dezvoltatori
+**Dezvoltatori:**
+- **Cosmin** - [@cozel6](https://github.com/cozel6)
+- **Matei Daniel** - _GitHub: în curs de configurare_
+
 **Timeline:** Octombrie 2024 - Ianuarie 2025 (12 săptămâni)
 **Instituție:** Proiect Facultate MIPE
 
