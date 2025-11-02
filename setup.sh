@@ -88,11 +88,17 @@ echo "✓ System dependencies installed"
 echo ""
 echo "Step 3: Creating Python virtual environment..."
 if [ -d "venv" ]; then
-    echo "Virtual environment already exists, skipping..."
-else
-    python3 -m venv venv
-    echo "✓ Virtual environment created"
+    echo "Removing old virtual environment..."
+    rm -rf venv
 fi
+
+# Install numpy/scipy at system level first (avoids build issues)
+echo "Installing scientific packages at system level..."
+sudo apt-get install -y python3-numpy python3-scipy python3-pil
+
+# Create venv with access to system packages
+python3 -m venv --system-site-packages venv
+echo "✓ Virtual environment created"
 
 # ==========================================
 # 4. Activate Virtual Environment
@@ -118,35 +124,30 @@ echo "Step 6: Installing Python dependencies..."
 echo "⚠️  This may take 10-20 minutes on Raspberry Pi..."
 echo "Please be patient..."
 
-# Check if requirements.txt exists
-if [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt
-else
-    echo "⚠️  requirements.txt not found, installing packages manually..."
-    
-    # Core packages
-    pip install numpy==1.24.3
-    pip install opencv-python==4.8.1.78
-    
-    # YOLOv5
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-    pip install ultralytics==8.0.196
-    
-    # Web framework
-    pip install flask==3.0.0
-    pip install flask-cors==4.0.0
-    
-    # Telegram bot
-    pip install python-telegram-bot==20.6
-    
-    # GPIO
-    pip install RPi.GPIO==0.7.1
-    
-    # Utilities
-    pip install python-dotenv==1.0.0
-    pip install pillow==10.1.0
-    pip install requests==2.31.0
-fi
+# Install packages one by one for better error handling
+echo "Installing OpenCV..."
+pip install opencv-python==4.8.1.78 --no-build-isolation || pip install opencv-python
+
+echo "Installing PyTorch (CPU version for Raspberry Pi)..."
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+echo "Installing YOLO..."
+pip install ultralytics==8.0.196
+
+echo "Installing Flask..."
+pip install flask==3.0.0
+pip install flask-cors==4.0.0
+
+echo "Installing Telegram bot..."
+pip install python-telegram-bot==20.6
+
+echo "Installing GPIO..."
+pip install RPi.GPIO==0.7.1
+
+echo "Installing utilities..."
+pip install python-dotenv==1.0.0
+pip install pillow==10.1.0
+pip install requests==2.31.0
 
 echo "✓ Python dependencies installed"
 
