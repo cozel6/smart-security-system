@@ -240,4 +240,4 @@ For issues and questions:
 
 ---
 
-**Made with ❤️ for MIPE Faculty Project**
+**Made with ❤️**
