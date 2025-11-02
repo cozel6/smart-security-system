@@ -40,13 +40,14 @@ echo "✓ System update complete"
 echo ""
 echo "Step 2: Installing system dependencies..."
 echo "This may take 5-10 minutes..."
+
+# Core dependencies
 sudo apt-get install -y \
     python3-pip \
     python3-venv \
     python3-dev \
     python3-opencv \
     libopencv-dev \
-    libatlas-base-dev \
     libjpeg-dev \
     libpng-dev \
     libavcodec-dev \
@@ -66,6 +67,18 @@ sudo apt-get install -y \
     git \
     cmake \
     build-essential
+
+# Try to install ATLAS or OpenBLAS (for numpy/scipy)
+echo "Installing linear algebra library..."
+if sudo apt-get install -y libatlas-base-dev 2>/dev/null; then
+    echo "✓ libatlas-base-dev installed"
+elif sudo apt-get install -y libatlas3-base 2>/dev/null; then
+    echo "✓ libatlas3-base installed"
+elif sudo apt-get install -y libopenblas-dev 2>/dev/null; then
+    echo "✓ libopenblas-dev installed (alternative)"
+else
+    echo "⚠️  Warning: Could not install ATLAS/OpenBLAS, but continuing..."
+fi
 
 echo "✓ System dependencies installed"
 
