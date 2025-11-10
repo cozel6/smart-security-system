@@ -121,31 +121,47 @@ class SystemManager:
 
         Returns:
             bool: True if initialization successful
-
-        TODO:
-        1. Setup logger
-        2. Log system startup
-        3. Initialize hardware components:
-            - Camera (start capture)
-            - PIR sensor (setup GPIO, register callback)
-            - LED controller (setup GPIO)
-            - Buzzer (setup GPIO)
-        4. Initialize detection components:
-            - Motion detector
-            - YOLO detector (load model)
-        5. Initialize alert components:
-            - Telegram bot (register callbacks)
-            - Alert manager
-        6. Initialize streaming components:
-            - Video streamer
-            - Flask server (register callbacks)
-        7. Start all services (Telegram bot, Flask server, Alert manager)
-        8. Set initial state (disarmed, green LED off)
-        9. Return True if successful, False if any component fails
-        10. Handle exceptions and log errors
+        
         """
-        # TODO: Implement component initialization
-        pass
+        try:
+            # 1. Setup logger
+            self.logger = get_logger("_name_")
+            self.logger.info("=" * 60)
+            self.logger.info("Initializing Smart Security System...")
+            self.logger.info("=" * 60)
+
+            # 2. For minimal version, we skip hardware initialization
+            self.logger.info("Running in minimal mode - skipping hardware initialization.")
+
+            # 3. Initialize Flask server with callbacks
+            self.logger.info("Initializing Flask server...")
+            self.flask_server = FlaskServer(
+                get_status_callback=self.get_status,
+                arm_callback=self.arm,
+                disarm_callback=self.disarm,
+                get_frame_callback=self.get_current_frame
+            )
+
+            # 4. Start Flask server
+            self.flask_server.start()
+            self.logger.info(f"Flask server started: {self.flask_server.get_url()}")
+
+            # 5. Set initial state
+            self.logger.info(f"Inital state: {self.state.value}")
+            self.logger.info("=" * 60)
+            self.logger.info("SYSTEM INITIALIZATION COMPLETE")
+            self.logger.info("=" * 60)  
+            return True
+        
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Initialization failed: {e}", exc_info=True)
+            else:
+                print(f"ERROR: Initialization failed: {e}")
+            return False
+    
+
+
 
     def arm(self) -> bool:
         """
@@ -153,18 +169,39 @@ class SystemManager:
 
         Returns:
             bool: True if armed successfully
-
-        TODO:
-        - Check if system is initialized
-        - Start detection thread
-        - Set state to ARMED
-        - Turn on green LED (armed indicator)
-        - Send Telegram message: "System armed"
-        - Log event
-        - Return True if successful
         """
-        # TODO: Implement arm logic
-        pass
+        try:
+            self.logger.info("Arming system...")
+            
+            # 1. Check if already armed
+            if self.state == SystemState.ARMED:
+                self.logger.warning("System is already armed")
+                return True
+            
+            # 2. Set state to ARMED
+            self.state = SystemState.ARMED
+            
+            # 3. Turn on green LED (armed indicator) - if available
+            if self.led_controller:
+                self.led_controller.set_armed()
+            
+            # 4. Start PIR sensor monitoring - Pentru Raspberry Pi
+            if self.pir_sensor:
+                self.pir_sensor.start()
+            
+            # 5. In future, we'll start detection thread here
+            # TODO: Uncomment when camera + detection are ready
+            # self.stop_event.clear()
+            # self.detection_thread = threading.Thread(target=self._detection_loop, daemon=True)
+            # self.detection_thread.start()
+            
+            self.logger.info("System armed successfully (camera detection disabled in minimal mode)")
+            
+            return True
+        
+        except Exception as e:
+            self.logger.error(f"Failed to arm system: {e}", exc_info=True)
+            return False
 
     def disarm(self) -> bool:
         """
@@ -172,18 +209,41 @@ class SystemManager:
 
         Returns:
             bool: True if disarmed successfully
-
-        TODO:
-        - Stop detection thread
-        - Set state to DISARMED
-        - Turn off all LEDs
-        - Stop any active alarm
-        - Send Telegram message: "System disarmed"
-        - Log event
-        - Return True if successful
         """
-        # TODO: Implement disarm logic
-        pass
+
+        try:
+            self.logger.info("Disarming system...")
+            
+            # 1. Stop detection thread if running
+            if self.detection_thread and self.detection_thread.is_alive():
+                self.stop_event.set()
+                self.detection_thread.join(timeout=5)
+                self.detection_thread = None
+                self.stop_event.clear()
+            
+            # 2. Set state to DISARMED
+            self.state = SystemState.DISARMED
+            
+            # 3. Turn off LEDs (if available)
+            if self.led_controller:
+                self.led_controller.turn_off_all()
+            
+            # 4. Stop buzzer (if available)
+            if self.buzzer:
+                self.buzzer.stop()
+            
+            # 5. Stop PIR sensor (if available) - Pentru Raspberry Pi
+            if self.pir_sensor:
+                self.pir_sensor.stop()
+            
+            self.logger.info("System disarmed successfully")
+            return True
+        
+        except Exception as e:
+            self.logger.error(f"Failed to disarm system: {e}", exc_info=True)
+            return False
+            
+            
 
     def _detection_loop(self) -> None:
         """
