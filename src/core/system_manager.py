@@ -135,22 +135,18 @@ class SystemManager:
 
             # 3. Initialize Flask server with callbacks
             self.logger.info("Initializing Flask server...")
-            self.flask_server = FlaskServer(
-                get_status_callback=self.get_status,
-                arm_callback=self.arm,
-                disarm_callback=self.disarm,
-                get_frame_callback=self.get_current_frame
-            )
+            self.flask_server = FlaskServer()
+            
 
             # 4. Start Flask server
+            self.logger.info("Registering Flask callbacks...")
+            self.flask_server.register_callbacks(
+                get_frame=self.get_current_frame,
+                get_status=self.get_status,
+                arm=self.arm,
+                disarm=self.disarm,
+            )
             self.flask_server.start()
-            self.logger.info(f"Flask server started: {self.flask_server.get_url()}")
-
-            # 5. Set initial state
-            self.logger.info(f"Inital state: {self.state.value}")
-            self.logger.info("=" * 60)
-            self.logger.info("SYSTEM INITIALIZATION COMPLETE")
-            self.logger.info("=" * 60)  
             return True
         
         except Exception as e:
