@@ -37,6 +37,7 @@ Usage:
         system.stop()
 """
 
+from pathlib import Path
 import threading
 import time
 from enum import Enum
@@ -44,10 +45,13 @@ from typing import Optional
 from datetime import datetime
 import signal
 import sys
+import psutil
+import numpy as np
+import cv2
 
-from src.hardware import Camera, PIRSensor, LEDController, Buzzer
-from src.detection import MotionDetector, YOLODetector, DetectionType, AlertLevel
-from src.alerts import TelegramBot, AlertManager
+#from src.hardware import Camera, PIRSensor, LEDController, Buzzer
+#from src.detection import MotionDetector, YOLODetector, DetectionType, AlertLevel
+#from src.alerts import TelegramBot, AlertManager
 from src.streaming import FlaskServer, VideoStreamer
 from src.utils.logger import setup_logger, get_logger
 from src.utils import helpers
@@ -318,26 +322,23 @@ class SystemManager:
     def get_status(self) -> dict:
         """
         Get current system status.
-
-        Returns:
-            dict: System status information
-
-        TODO:
-        - Return dict with:
-            - state (armed/disarmed/alarm)
-            - uptime (seconds)
-            - cpu_usage
-            - ram_usage
-            - temperature (Raspberry Pi)
-            - camera_fps
-            - total_detections
-            - person_detections
-            - animal_detections
-            - last_detection_time
-        - Use helpers for system info
         """
-        # TODO: Implement status retrieval
-        pass
+        from src.utils.helpers import get_cpu_usage, get_memory_usage, format_uptime
+        import time 
+
+        # Calculate uptime
+        uptime_seconds = time.time() - self._start_time if hasattr(self, '_start_time') else 0
+
+        # Get system info
+        status = {
+            "armed": getattr(self, '_is_armed', False),
+            "uptime": format_uptime(uptime_seconds),
+            "cpu_usage": f"{get_cpu_usage():.1f}%",
+            "memory_usage": f"{get_memory_usage():.1f}%",
+            "camera_fps": 0,  # TODO: Calculate actual FPS when camera is implemented
+            "last_detection": None,  # TODO: Track last detection when detection is implemented
+        }
+        return status
 
     def get_current_frame(self):
         """
@@ -349,7 +350,46 @@ class SystemManager:
         - Handle camera not initialized
         """
         # TODO: Implement frame retrieval
-        pass
+        if self.camera:
+            frame = self.camera.get_frame()
+            return frame
+        #Fallback : now retrun dummy data , for prod we should raise exception or handle it properly
+        return self._generate_dummy_frame()
+
+    def _generate_dummy_frame(self) -> np.ndarray:
+        """
+        Generate colored test frame with system info (for testing without camera).
+        
+        Returns:
+            np.ndarray: 640x480 BGR frame with text overlay
+        """
+        # Create blank frame (480 height x 640 width x 3 color channels)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        # Fill with orange color (BGR format: Blue, Green, Red)
+        frame[:] = (60, 120, 180)  
+        
+        # Add text overlays
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        white = (255, 255, 255)
+        
+        # Title
+        cv2.putText(frame, "TEST MODE - NO CAMERA", (140, 180), 
+                    font, 0.9, white, 2, cv2.LINE_AA)
+        
+        # Current timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cv2.putText(frame, timestamp, (200, 240), 
+                    font, 0.7, white, 2, cv2.LINE_AA)
+        
+        # System state
+        state_text = f"State: {self.state.value.upper()}"
+        state_color = (0, 255, 0) if self.state == SystemState.ARMED else (100, 100, 100)
+        cv2.putText(frame, state_text, (230, 300), 
+                    font, 0.8, state_color, 2, cv2.LINE_AA)
+        
+        return frame
+
 
     def trigger_alarm(self) -> None:
         """
@@ -437,4 +477,19 @@ class SystemManager:
 if __name__ == "__main__":
     """Test system manager."""
     print("System Manager test - TODO: Implement test code")
-    pass
+    print("Testing get_current_frame()...")
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from src.utils.logger import setup_logger, get_logger
+
+    setup_logger()
+
+    manager = SystemManager()
+    frame = manager.get_current_frame()
+    if frame is not None:
+        print("Frame retrieved successfully.")
+        cv2.imshow("Test Frame", frame)
+        cv2.waitKey(2000)  # Display for 2 seconds
+        cv2.destroyAllWindows()
+    else:
+        print("Failed to retrieve frame.")

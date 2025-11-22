@@ -267,20 +267,14 @@ def get_cpu_usage() -> float:
     - Use psutil.cpu_percent()
     - Return percentage
     """
-    # TODO: Implement CPU usage check
-    pass
+    return psutil.virtual_memory().percent
 
 
 def get_memory_usage() -> float:
     """
     Get current RAM usage percentage.
-
-    TODO:
-    - Use psutil.virtual_memory()
-    - Return percentage
     """
-    # TODO: Implement memory usage check
-    pass
+    return psutil.virtual_memory().percent
 
 
 def get_cpu_temperature() -> Optional[float]:
@@ -322,14 +316,24 @@ def format_uptime(seconds: float) -> str:
 
     Returns:
         str: Formatted string like "2 days, 5 hours, 23 minutes"
-
-    TODO:
-    - Convert seconds to days, hours, minutes
-    - Format as readable string
-    - Return formatted string
     """
-    # TODO: Implement uptime formatting
-    pass
+    days = int(seconds // 86400)
+    hours = int((seconds % 86400) // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+
+    #Build formatted string
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0 or days > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0 or hours > 0 or days > 0:
+        parts.append(f"{minutes}m")
+    parts.append(f"{secs}s")
+
+    return " ".join(parts)
+
 
 
 # ====================

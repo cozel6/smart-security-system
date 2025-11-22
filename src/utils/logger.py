@@ -13,7 +13,6 @@ Features:
 
 Usage:
     from src.utils.logger import setup_logger, get_logger
-
     # Setup once at application start
     setup_logger()
 
@@ -63,8 +62,54 @@ def setup_logger(
     - Add console handler with colored output (optional)
     - Return configured logger
     """
-    # TODO: Implement logger setup
-    pass
+    # Load deafults from settings if not provided
+    log_file = log_file or settings.log_file
+    log_level = log_level or settings.log_level
+    max_bytes = max_bytes or (settings.log_max_size * 1024 * 1024)  # Convert MB to bytes
+    backup_count = backup_count or settings.log_backup_count
+
+    #Create log directory if not exist
+    log_path = Path(log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    #Create or get logger
+    logger = logging.getLogger(name)
+    logger.setLevel(getattr(logging, log_level.upper()))
+
+    #Remove existing handlers to avoid duplicates
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    #Create formatter with timestamp, level, module, message
+    formatter = logging.Formatter(
+    fmt='[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    #Add rotating file handler (prevent huge files)
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file,
+        maxBytes= max_bytes,
+        backupCount= backup_count,
+        encoding='utf-8'
+    )
+
+    file_handler.setLevel(getattr(logging, log_level.upper()))
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    # Add console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(getattr(logging, log_level.upper()))
+    # Use ColoredFormatter for console (we'll implement it next)
+    console_handler.setFormatter(ColoredFormatter(
+        fmt='[%(asctime)s] [%(levelname)s] %(message)s',
+        datefmt='%H:%M:%S'
+    ))
+    logger.addHandler(console_handler)
+
+    return logger
+
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -76,13 +121,18 @@ def get_logger(name: str) -> logging.Logger:
 
     Returns:
         logging.Logger: Logger instance
+   """
 
-    TODO:
-    - Return logging.getLogger(name)
-    - If logger not configured, call setup_logger() first
-    """
-    # TODO: Implement logger retrieval
-    pass
+    # Get logger by name
+    logger = logging.getLogger(name)
+
+    # If logger has no hadlers, or not cofigured yet
+    if not logger.hasHandlers():
+        setup_logger(name)
+        logger = logging.getLogger(name)
+    
+    return logger
+
 
 
 def log_system_event(event_type: str, message: str, level: str = "INFO") -> None:
@@ -207,14 +257,22 @@ class ColoredFormatter(logging.Formatter):
     def format(self, record):
         """
         Format log record with colors.
-
-        TODO:
-        - Get color based on record.levelname
-        - Add color codes to output
-        - Return formatted string
         """
-        # TODO: Implement colored formatting
-        pass
+        # Get the original formatted message
+        log_message = super().format(record)
+        
+        # Get color based on log level
+        level_color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
+        reset_color = self.COLORS['RESET']
+
+        # Apply color only to the level name in the message
+        colored_message = log_message.replace(
+            f'[{record.levelname}]',
+            f'[{level_color}{record.levelname}{reset_color}]'
+        )
+
+        return colored_message
+
 
 
 # TODO: Initialize logger on module import
@@ -231,5 +289,25 @@ class ColoredFormatter(logging.Formatter):
 
 if __name__ == "__main__":
     """Test logger functionality."""
-    print("Logger test - TODO: Implement test code")
-    pass
+    print("=== Testing Logger ===\n")
+
+    # Test setup_logger
+    logger = setup_logger(name="test_logger", log_file="logs/test.log")
+    print("✓ Logger created")
+
+    # Test different log levels
+    logger.debug("This is a DEBUG message")
+    logger.info("This is an INFO message")
+    logger.warning("This is a WARNING message")
+    logger.error("This is an ERROR message")
+    logger.critical("This is a CRITICAL message")
+
+    print("\n✓ Check console output above for colored messages")
+    print("✓ Check logs/test.log for file output")
+
+    # Test get_logger
+    logger2 = get_logger("test_logger")
+    logger2.info("Testing get_logger() - this should work")
+
+
+    print("\n=== Logger test completed ===")

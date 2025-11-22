@@ -119,71 +119,120 @@ class FlaskServer:
         return render_template('index.html')
 
     def video_feed(self):
-        """
-        MJPEG video stream endpoint.
+        def generate():
+            """Generator function for video streaming."""
+            while True:
+                # Get frame from callback
+                if self.get_frame_callback:
+                    frame = self.get_frame_callback()
+                    
+                    if frame is not None:
+                        # Encode frame as JPEG
+                        import cv2
+                        ret, buffer = cv2.imencode('.jpg', frame)
+                        
+                        if ret:
+                            frame_bytes = buffer.tobytes()
+                            
+                            # Yield frame in multipart format
+                            yield (b'--frame\r\n'
+                                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                
+                # Small delay to control frame rate
+                import time
+                time.sleep(0.033)  # ~30 FPS
 
-        TODO:
-        - Return Response with MJPEG stream
-        - Use VideoStreamer to generate frames
-        - Set appropriate mimetype: multipart/x-mixed-replace
-        """
-        # TODO: Implement video streaming
-        pass
+        # Return streaming response
+        return Response(
+            generate(),
+            mimetype='multipart/x-mixed-replace; boundary=frame'
+        )
 
     def api_status(self):
         """
         Get system status (API endpoint).
-
-        TODO:
-        - Call get_status_callback to get current status
-        - Return JSON with:
-            - armed: bool
-            - uptime: seconds
-            - last_detection: timestamp
-            - cpu_usage: percentage
-            - ram_usage: percentage
-            - temperature: celsius (Raspberry Pi)
         """
-        # TODO: Implement status API
-        pass
+        # Call callback if available
+        if self.get_status_callback:
+            status = self.get_status_callback()
+            return jsonify(status)
+        else:
+        #Return dummy status if no callbacks,
+            return jsonify(
+                {
+                    "armed": False,
+                    "uptime" : "0:00:00",
+                    "camera_fps" : 0,
+                    "cpu_usage" : "0%",
+                    "memory_usage": "0%",
+                    "last_detection": None
+                }
+            )
 
     def api_arm(self):
         """
         Arm system (API endpoint).
-
-        TODO:
-        - Check if arm_callback is set
-        - Call arm_callback()
-        - Return JSON response:
-            - success: bool
-            - message: string
         """
-        # TODO: Implement arm API
-        pass
-
+        # Call calback if available
+        if self.arm_callback:
+            try:
+                self.arm_callback()
+                return jsonify({
+                    "success" : True,
+                    "message": "System armed successfully"
+                })
+            except Exception as e:
+                return jsonify({
+                    "success": False,
+                    "message": f"Failed to arm system: {str(e)}"
+                }), 500
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Arm callback not registered"
+            }), 400
+        
     def api_disarm(self):
         """
         Disarm system (API endpoint).
-
-        TODO:
-        - Check if disarm_callback is set
-        - Call disarm_callback()
-        - Return JSON response
         """
-        # TODO: Implement disarm API
-        pass
+        # Call callback if available
+        if self.disarm_callback:
+            try:
+                self.disarm_callback()
+                return jsonify({
+                    "success": True,
+                    "message": "System disarmed successfully"
+                })
+            except Exception as e:
+                return jsonify({
+                    "success": False,
+                    "message": f"Failed to disarm system: {str(e)}"
+                }), 500
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Disarm callback not registered"
+            }), 400
 
     def api_snapshot(self):
         """
         Get current camera frame (API endpoint).
-
-        TODO:
-        - Call get_frame_callback to get latest frame
-        - Convert to JPEG
-        - Return as image response
         """
-        # TODO: Implement snapshot API
-        pass
+        # Get current frame
+        if self.get_frame_callback:
+            frame = self.get_frame_callback()
+            
+            if frame is not None:
+                import cv2
+                # Encode as JPEG
+                ret, buffer = cv2.imencode('.jpg', frame)
+                
+                if ret:
+                    return Response(buffer.tobytes(), mimetype='image/jpeg')
+            
+        return jsonify({"error": "No frame available"}), 404
+        
 
     def api_logs(self):
         """
@@ -195,7 +244,10 @@ class FlaskServer:
         - Return with pagination support
         """
         # TODO: Implement logs API
-        pass
+        return jsonify({
+            "logs": [],
+            "count": 0
+        }) # For now, return empty logs
 
     def register_callbacks(
         self,
@@ -228,21 +280,35 @@ class FlaskServer:
         - Log server URL
         """
         # TODO: Implement server startup
-        pass
+        if self.running:
+            print(f"Server already running at {self.get_url()}")
+            return
+        
+        # Create server thread
+        self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+        self.running = True
+
+        # Start server
+        self.server_thread.start()
+
+        print(f"Server started at {self.get_url()}")
+
 
     def _run_server(self) -> None:
         """
         Run Flask server (called in thread).
-
-        TODO:
-        - Call app.run() with:
-            - host=self.host
-            - port=self.port
-            - debug=self.debug
-            - use_reloader=False (important for threading)
         """
-        # TODO: Implement server run
-        pass
+        try:
+            self.app.run(
+                host = self.host,
+                port = self.port,
+                debug=self.debug,
+                use_reloader = False, # for not create dublicate threads
+                threaded = True
+            )
+        except Exception as e:
+            print(f"Server error: {e}")
+            self.running = False
 
     def stop(self) -> None:
         """
@@ -254,8 +320,15 @@ class FlaskServer:
         - Wait for thread to finish
         - Log shutdown
         """
-        # TODO: Implement server shutdown
-        pass
+        if not self.running:
+            print("Server not running")
+            return
+        print("Stopping Flask server...")
+        self.running = False
+
+        # Note: Flask doesn't have a clean shutdown method in threading mode
+        # The daemon thread will stop when main program exits
+        print("✓ Flask server stopped")
 
     def is_running(self) -> bool:
         """Check if server is running."""
@@ -273,5 +346,26 @@ class FlaskServer:
 
 if __name__ == "__main__":
     """Test Flask server."""
-    print("Flask Server test - TODO: Implement test code")
-    pass
+    print("=== Testing Flask Server ===\n")
+
+    # Create server instance
+    server = FlaskServer(host="127.0.0.1", port=5001)
+    print(f"✓ Server created: {server}")
+
+    # Test start
+    server.start()
+    print(f"✓ Server running: {server.is_running()}")
+    print(f"✓ URL: {server.get_url()}")
+
+    print("\n→ Open browser at http://127.0.0.1:5001")
+    print("→ Press Ctrl+C to stop\n")
+
+    # Keep server running
+    try:
+        import time
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n\nStopping server...")
+        server.stop()
+        print("✓ Test completed")
