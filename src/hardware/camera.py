@@ -191,21 +191,42 @@ class Camera:
 
         Continuously reads frames from camera and puts them in queue.
         Discards old frames if queue is full (keep only latest).
-
-        TODO:
-        - Loop while not self.stopped
-        - Read frame from self.capture.read()
-        - If frame read successfully:
-            - Try to put frame in queue (non-blocking)
-            - If queue full, remove old frame first
-            - Increment frame_count
-        - If frame read failed:
-            - Log error
-            - Sleep briefly and retry
-        - Handle exceptions gracefully
         """
-        # TODO: Implement capture loop
-        pass
+        while not self.stopped:
+            try:
+                # Read frame from camera
+                ret, frame = self.capture.read()
+                
+                if ret and frame is not None:
+                    # Try to put frame in queue (non-blocking)
+                    try:
+                        # If queue is full, remove old frame first
+                        if self.frame_queue.full():
+                            try:
+                                self.frame_queue.get_nowait()
+                            except Empty:
+                                pass
+                        
+                        # Put new frame in queue
+                        self.frame_queue.put(frame, block=False)
+                        self.frame_count += 1
+                        
+                    except Exception as e:
+                        # Queue operations failed, continue
+                        pass
+                else:
+                    # Frame read failed
+                    print(f"Warning: Failed to read frame from camera")
+                    time.sleep(0.1)  # Wait before retry
+                    
+            except Exception as e:
+                print(f"Error in capture loop: {e}")
+                time.sleep(0.1)
+
+        print("Capture loop stopped")
+
+
+
 
     def get_frame(self, timeout: float = 1.0) -> Optional[np.ndarray]:
         """
@@ -216,15 +237,14 @@ class Camera:
 
         Returns:
             numpy.ndarray: Latest frame, or None if no frame available
-
-        TODO:
-        - Try to get frame from queue (with timeout)
-        - If queue empty, return None
-        - Return frame as numpy array
-        - Handle Empty exception from queue
         """
-        # TODO: Implement thread-safe frame retrieval
-        pass
+        try:
+            # Try to get frame from queue with timeout
+            frame = self.frame_queue.get(timeout=timeout)
+            return frame
+        except Empty:
+            # No frame available
+            return None
 
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         """
@@ -232,43 +252,65 @@ class Camera:
 
         Returns:
             Tuple[bool, Optional[np.ndarray]]: (success, frame)
-
-        TODO:
-        - Call get_frame()
-        - Return (True, frame) if frame exists
-        - Return (False, None) if no frame
         """
-        # TODO: Implement OpenCV-compatible read method
-        pass
+        frame = self.get_frame()
+        if frame is not None:
+            return(True, frame)
+        else:
+            return(False, None)
+
+    
 
     def stop(self) -> None:
         """
         Stop camera capture and cleanup resources.
-
-        TODO:
-        - Set self.stopped = True to signal thread to stop
-        - Wait for capture thread to finish (thread.join with timeout)
-        - Release camera (capture.release())
-        - Clear frame queue
-        - Log final statistics (total frames captured, average FPS)
         """
-        # TODO: Implement graceful shutdown
-        pass
+        if self.stopped:
+            print(f"Camera already stopped")
+            return
+        # Singal thread to stop
+        self.stopped = True
+
+        # Wait for thread to finish (with timeout)
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        
+        # Release camera
+        if self.capture:
+            self.capture.release()
+            self.capture = None
+
+        # Clear fron queue
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except Empty:
+                break
+
+        # Log statistics
+        if self.start_time:
+            elapsed = time.time() - self.start_time
+            avg_fps = self.frame_count / elapsed if elapsed > 0 else 0
+            print(f"✓ Camera stopped. Captured {self.frame_count} frames in {elapsed:.1f}s ({avg_fps:.1f} FPS)")
+        else:
+            print("✓ Camera stopped")
 
     def is_opened(self) -> bool:
         """
         Check if camera is opened and capturing.
-
         Returns:
             bool: True if camera is active, False otherwise
-
-        TODO:
-        - Check if capture object exists and is opened
-        - Check if thread is alive
-        - Return True only if both conditions met
         """
-        # TODO: Implement status check
-        pass
+        if self.capture is None:
+            return False
+            
+        if not self.capture.isOpened():
+            return False
+        
+        if self.thread is None or not self.thread.is_alive():
+            return False
+        
+        return not self.stopped
 
     def get_fps(self) -> float:
         """
@@ -276,15 +318,16 @@ class Camera:
 
         Returns:
             float: Frames per second
-
-        TODO:
-        - Calculate elapsed time since start
-        - Divide frame_count by elapsed time
-        - Return calculated FPS
-        - Handle edge cases (no frames captured yet)
         """
-        # TODO: Implement FPS calculation
-        pass
+        if self.start_time is None or self.frame_count == 0:
+            return 0.0
+        
+        elapsed = time.time() - self.start_time
+        
+        if elapsed == 0:
+            return 0.0
+        
+        return self.frame_count / elapsed
 
     def get_resolution(self) -> Tuple[int, int]:
         """
