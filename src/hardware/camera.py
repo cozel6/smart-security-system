@@ -90,25 +90,100 @@ class Camera:
 
     def start(self) -> bool:
         """
-        Start camera capture thread.
+        Start camera capture thread with auto-detection. / NEW
 
         Returns:
             bool: True if started successfully, False otherwise
-
-        TODO:
-        - Initialize cv2.VideoCapture(self.camera_index)
-        - Check if camera opened successfully (capture.isOpened())
-        - Set camera properties:
-            - cv2.CAP_PROP_FRAME_WIDTH
-            - cv2.CAP_PROP_FRAME_HEIGHT
-            - cv2.CAP_PROP_FPS
-        - Create and start capture thread (target=self._capture_loop)
-        - Set daemon=True so thread stops when main program exits
-        - Wait a moment for first frame to be captured
-        - Return True if successful, False if camera failed to open
         """
-        # TODO: Implement camera initialization and thread start
-        pass
+        # Try configured index first
+        if self._try_camera(self.camera_index):
+            print(f"Camera started at cofiguration index {self.camera_index} (from config)...")
+            return self._finalize_start()
+        
+        # Auto-detect camera index
+        print("Configured camera index failed. Starting auto-detection...")
+        for index in range(5):
+            if index == self.camera_index:
+                continue
+
+            # Auto-detection fallback
+            print(f"Camera camera index {index}... ")
+            if self._try_camera(index):
+                print(f"✓ Found camera at index {index}")
+                self.camera_index = index
+                return self._finalize_start()
+            
+        print("No camera false")
+        return False
+
+    def _try_camera(self, index: int) -> bool:
+        """
+        Try to open camera at specific index.
+
+        Args:
+            index: Camera index to try
+
+        Returns:
+            bool: True if camera opened and can read frames
+        """
+        try:
+            # Test if camera can be opened
+            test_cap = cv2.VideoCapture(index)
+            if not test_cap.isOpened():
+                test_cap.release()
+                return False
+            
+            # Try to read a test frame
+            ret, _ = test_cap.read()
+            test_cap.release()
+
+            if not ret:
+                return False
+            
+            # Success - now open for real use
+            self.capture = cv2.VideoCapture(index)
+            return self.capture.isOpened()
+            
+        except Exception as e:
+            print(f"Error trying camera {index}: {e}")
+            return False
+    
+    def _finalize_start(self) -> bool:
+        """
+        Finalize camera start - set properties and start thread.
+
+        Called after camera is successfully opened.
+
+        Returns:
+            bool: True if finalization successful
+        """
+        # Set camera properties
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self.capture.set(cv2.CAP_PROP_FPS, self.fps)
+
+        # Get actual resolution
+        actual_width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        print(f"✓ Camera resolution: {actual_width}x{actual_height}")
+
+        # Start capture thread
+        self.stopped = False
+        self.start_time = time.time()
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()  # IMPORTANT!
+
+        # Wait for first frame
+        time.sleep(0.5)
+        
+        # Verify frames are being captured
+        if not self.frame_queue.empty():
+            print(f"✓ Capturing frames ({self.frame_count} in queue)")
+        else:
+            print("⚠ Warning: No frames captured yet")
+
+        print(f"✓ Camera started successfully")
+        return True
 
     def _capture_loop(self) -> None:
         """
