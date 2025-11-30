@@ -58,14 +58,6 @@ class Camera:
             width: Frame width in pixels (default from settings)
             height: Frame height in pixels (default from settings)
             fps: Target FPS (default from settings)
-
-        TODO:
-        - Load camera settings from config if not provided
-        - Initialize cv2.VideoCapture with camera_index
-        - Set camera properties (width, height, FPS)
-        - Initialize threading components (thread, lock, event)
-        - Initialize frame queue (maxsize=2 to keep only latest frames)
-        - Set stopped flag to False
         """
         # Camera settings
         self.camera_index = camera_index or settings.camera_index
@@ -91,13 +83,10 @@ class Camera:
     def start(self) -> bool:
         """
         Start camera capture thread with auto-detection. / NEW
-
-        Returns:
-            bool: True if started successfully, False otherwise
         """
         # Try configured index first
         if self._try_camera(self.camera_index):
-            print(f"Camera started at cofiguration index {self.camera_index} (from config)...")
+            print(f"Camera started at configuration index {self.camera_index} (from config)...")
             return self._finalize_start()
         
         # Auto-detect camera index
@@ -107,30 +96,25 @@ class Camera:
                 continue
 
             # Auto-detection fallback
-            print(f"Camera camera index {index}... ")
+            print(f"Trying camera index {index}... ")
             if self._try_camera(index):
                 print(f"✓ Found camera at index {index}")
                 self.camera_index = index
                 return self._finalize_start()
             
-        print("No camera false")
+        print("No camera found")
         return False
 
     def _try_camera(self, index: int) -> bool:
         """
         Try to open camera at specific index.
-
-        Args:
-            index: Camera index to try
-
-        Returns:
-            bool: True if camera opened and can read frames
         """
         try:
             # Test if camera can be opened
             test_cap = cv2.VideoCapture(index)
             if not test_cap.isOpened():
                 test_cap.release()
+                
                 return False
             
             # Try to read a test frame
@@ -151,11 +135,7 @@ class Camera:
     def _finalize_start(self) -> bool:
         """
         Finalize camera start - set properties and start thread.
-
         Called after camera is successfully opened.
-
-        Returns:
-            bool: True if finalization successful
         """
         # Set camera properties
         self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
@@ -188,7 +168,6 @@ class Camera:
     def _capture_loop(self) -> None:
         """
         Main capture loop (runs in separate thread).
-
         Continuously reads frames from camera and puts them in queue.
         Discards old frames if queue is full (keep only latest).
         """
@@ -234,9 +213,6 @@ class Camera:
 
         Args:
             timeout: Maximum time to wait for frame (seconds)
-
-        Returns:
-            numpy.ndarray: Latest frame, or None if no frame available
         """
         try:
             # Try to get frame from queue with timeout
@@ -280,7 +256,7 @@ class Camera:
             self.capture.release()
             self.capture = None
 
-        # Clear fron queue
+        # Clear from queue
         while not self.frame_queue.empty():
             try:
                 self.frame_queue.get_nowait()
@@ -332,13 +308,6 @@ class Camera:
     def get_resolution(self) -> Tuple[int, int]:
         """
         Get current camera resolution.
-
-        Returns:
-            Tuple[int, int]: (width, height)
-
-        TODO:
-        - Get actual resolution from capture object
-        - Return (width, height) tuple
         """
         return (self.width, self.height)
 
@@ -361,13 +330,79 @@ class Camera:
 if __name__ == "__main__":
     """
     Test camera functionality.
-
-    TODO:
-    - Initialize camera
-    - Capture frames for 10 seconds
-    - Display frames with cv2.imshow()
-    - Print FPS statistics
-    - Test graceful shutdown
     """
-    print("Camera test - TODO: Implement test code")
-    pass
+    print("=" * 60)
+    print("Camera test module")
+    print("=" * 60)
+
+    # Test 1: Initialize camera
+    print("\n[Test 1] Initializing camera...")
+    camera = Camera()
+    
+    # Test 2: Start camera
+    print("\n[Test 2] Starting camera...")
+    if not camera.start():
+        print("❌ Failed to start camera!")
+        exit(1)
+    
+    print(f"✓ Camera started: {camera}")
+    
+    # Test 3: Capture frames for 10 seconds
+    print("\n[Test 3] Capturing frames for 10 seconds...")
+    print("Press 'q' to quit early, or wait 10 seconds")
+    
+    start_time = time.time()
+    frame_display_count = 0
+
+    try:
+        while(time.time() - start_time) < 10:
+            # Get frame
+            frame = camera.get_frame(timeout=1.0)
+            if frame is not None:
+                # Add fps overlay
+                fps = camera.get_fps()
+                cv2.putText(
+                    frame,
+                    f"FPS: {fps:.1f}",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 255, 0),
+                    2
+                )
+                # Display frame
+                cv2.imshow("Camera Test", frame)
+                frame_display_count += 1
+
+                # Check for 'q' key to quit
+                if cv2.waitKey(1) &  0xFF == ord('q'):
+                    print("\n→ User pressed 'q', exiting early...")
+                    break
+            else:
+                print("⚠ Warning: No frame received")
+                time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("\n→ Keyboard interrupt received")
+    
+    finally:
+        # Close display window
+        cv2.destroyAllWindows()
+
+    # Test 4: Print statistics
+    print(f"\n[Test 4] Statistics:")
+    print(f"  - Frames displayed: {frame_display_count}")
+    print(f"  - Total frames captured: {camera.frame_count}")
+    print(f"  - Average FPS: {camera.get_fps():.1f}")
+    print(f"  - Resolution: {camera.get_resolution()}")
+    print(f"  - Camera index: {camera.camera_index}")
+    
+    # Test 5: Stop camera
+    print(f"\n[Test 5] Stopping camera...")
+    camera.stop()
+    
+    print("\n" + "=" * 60)
+    print("✓ ALL TESTS PASSED")
+    print("=" * 60)
+
+

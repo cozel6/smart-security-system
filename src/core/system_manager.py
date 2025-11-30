@@ -49,13 +49,14 @@ import psutil
 import numpy as np
 import cv2
 
-#from src.hardware import Camera, PIRSensor, LEDController, Buzzer
+#from src.hardware import PIRSensor, LEDController, Buzzer
 #from src.detection import MotionDetector, YOLODetector, DetectionType, AlertLevel
 #from src.alerts import TelegramBot, AlertManager
 from src.streaming import FlaskServer, VideoStreamer
 from src.utils.logger import setup_logger, get_logger
 from src.utils import helpers
 from config.settings import settings
+from src.hardware import Camera 
 
 
 class SystemState(Enum):
@@ -122,10 +123,6 @@ class SystemManager:
     def initialize(self) -> bool:
         """
         Initialize all system components.
-
-        Returns:
-            bool: True if initialization successful
-        
         """
         try:
             # 1. Setup logger
@@ -134,8 +131,13 @@ class SystemManager:
             self.logger.info("Initializing Smart Security System...")
             self.logger.info("=" * 60)
 
-            # 2. For minimal version, we skip hardware initialization
-            self.logger.info("Running in minimal mode - skipping hardware initialization.")
+            # 2. Initialization camera
+            self.logger.info("Initializing camera...")
+            self.camera = Camera()
+            if not self.camera.start():
+                self.logger.error("Failed to start camera")
+                return False
+            self.logger.info(f"Camera initialized: {self.camera}")
 
             # 3. Initialize Flask server with callbacks
             self.logger.info("Initializing Flask server...")
@@ -151,6 +153,8 @@ class SystemManager:
                 disarm=self.disarm,
             )
             self.flask_server.start()
+            self.start_time = time.time()
+            self._is_armed = False
             return True
         
         except Exception as e:
@@ -343,18 +347,14 @@ class SystemManager:
     def get_current_frame(self):
         """
         Get current camera frame (for snapshots/streaming).
-
-        TODO:
-        - Get frame from camera
-        - Return frame
-        - Handle camera not initialized
         """
-        # TODO: Implement frame retrieval
-        if self.camera:
-            frame = self.camera.get_frame()
-            return frame
-        #Fallback : now retrun dummy data , for prod we should raise exception or handle it properly
+        if self.camera and self.camera.is_opened():
+            frame = self.camera.get_frame(timeout=0.5)
+            if frame is not None:
+                return frame
+        # Fallback to dummy frame if camera unavailable
         return self._generate_dummy_frame()
+        
 
     def _generate_dummy_frame(self) -> np.ndarray:
         """
@@ -438,8 +438,41 @@ class SystemManager:
         6. Log final statistics
         7. Log shutdown complete
         """
-        # TODO: Implement system shutdown
-        pass
+
+  
+        if self.logger:
+            self.logger.info("Shutting down system...")
+
+        # Stop detection thread if running
+        if self.detection_thread and self.detection_thread.is_alive():
+            self.stop_event.set()
+            self.detection_thread.join(timeout=5)
+
+        # Stop Flask server
+        if self.flask_server:
+            self.logger.info("Stopping Flask server...")
+            self.flask_server.stop()
+
+        # Stop camera
+        if self.camera:
+            self.logger.info("Stopping camera...")
+            self.camera.stop()
+
+        # Turn off hardware (if available)
+        if self.led_controller:
+            self.led_controller.turn_off_all()
+        
+        if self.buzzer:
+            self.buzzer.stop()
+
+        if self.logger:
+            self.logger.info("✓ System shutdown complete")
+        
+        
+
+        
+
+
 
     def _signal_handler(self, signum, frame):
         """
