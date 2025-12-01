@@ -237,11 +237,6 @@ class FlaskServer:
     def api_logs(self):
         """
         Get recent event logs (API endpoint).
-
-        TODO:
-        - Read recent log entries (last 20)
-        - Parse and format as JSON array
-        - Return with pagination support
         """
         # TODO: Implement logs API
         return jsonify({
@@ -259,9 +254,6 @@ class FlaskServer:
         """
         Register callback functions for system interaction.
 
-        TODO:
-        - Store callback functions
-        - Will be called by route handlers
         """
         self.get_frame_callback = get_frame
         self.get_status_callback = get_status

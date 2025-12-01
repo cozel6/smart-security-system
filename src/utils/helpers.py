@@ -262,10 +262,6 @@ def get_file_size_mb(filepath: str) -> float:
 def get_cpu_usage() -> float:
     """
     Get current CPU usage percentage.
-
-    TODO:
-    - Use psutil.cpu_percent()
-    - Return percentage
     """
     return psutil.virtual_memory().percent
 
@@ -310,12 +306,9 @@ def get_system_uptime() -> float:
 def format_uptime(seconds: float) -> str:
     """
     Format uptime as human-readable string.
-
+    
     Args:
         seconds: Uptime in seconds
-
-    Returns:
-        str: Formatted string like "2 days, 5 hours, 23 minutes"
     """
     days = int(seconds // 86400)
     hours = int((seconds % 86400) // 3600)
@@ -364,14 +357,6 @@ def format_confidence(confidence: float) -> str:
 
     Args:
         confidence: Confidence value (0.0-1.0)
-
-    Returns:
-        str: Formatted percentage like "85.5%"
-
-    TODO:
-    - Multiply by 100
-    - Format with 1 decimal place
-    - Add % symbol
     """
     return f"{confidence * 100:.1f}%"
 

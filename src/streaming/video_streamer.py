@@ -33,7 +33,6 @@ import time
 class VideoStreamer:
     """
     MJPEG video streamer for Flask.
-
     Generates MJPEG stream from frame source (camera or processed frames).
     """
 
@@ -45,16 +44,6 @@ class VideoStreamer:
     ):
         """
         Initialize video streamer.
-
-        Args:
-            get_frame_callback: Callback to get latest frame
-            jpeg_quality: JPEG compression quality (0-100, higher=better)
-            max_fps: Maximum streaming FPS (to limit bandwidth)
-
-        TODO:
-        - Store callback and parameters
-        - Calculate frame interval from max_fps
-        - Initialize statistics
         """
         self.get_frame_callback = get_frame_callback
         self.jpeg_quality = jpeg_quality
