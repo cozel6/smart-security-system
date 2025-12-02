@@ -483,23 +483,38 @@ class SystemManager:
 
 
     def get_status(self) -> dict:
-        """
-        Get current system status.
-        """
-        from src.utils.helpers import get_cpu_usage, get_memory_usage, format_uptime
-        import time 
+        """Get current system status with proper format for dashboard."""
+        from src.utils.helpers import get_cpu_usage, get_memory_usage, get_cpu_temperature, format_uptime
+        import time
 
         # Calculate uptime
         uptime_seconds = time.time() - self._start_time if hasattr(self, '_start_time') else 0
 
         # Get system info
         status = {
-            "armed": getattr(self, '_is_armed', False),
+            # Frontend expects "state" not "armed"
+            "state": self.state.value if hasattr(self, 'state') else "disarmed",
+
+            # Numeric values, not formatted strings
+            "cpu_usage": round(get_cpu_usage(), 1),
+            "ram_usage": round(get_memory_usage(), 1),
+            "temperature": get_cpu_temperature(),  # Will return None on Mac if not available
+
+            # Keep as string
             "uptime": format_uptime(uptime_seconds),
-            "cpu_usage": f"{get_cpu_usage():.1f}%",
-            "memory_usage": f"{get_memory_usage():.1f}%",
-            "camera_fps": 0,  # TODO: Calculate actual FPS when camera is implemented
-            "last_detection": None,  # TODO: Track last detection when detection is implemented
+
+            # Calculate actual camera FPS
+            "camera_fps": round(self.camera_fps, 1) if hasattr(self, 'camera_fps') else 0,
+
+            # Add detection statistics
+            "detections": {
+                "total": self.total_detections,
+                "person": self.person_detections,
+                "animal": self.animal_detections
+            },
+
+            # Last detection timestamp
+            "last_detection": self.last_detection_time.isoformat() if hasattr(self, 'last_detection_time') and self.last_detection_time else None
         }
         return status
 
