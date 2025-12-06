@@ -68,7 +68,11 @@ class MotionDetector:
         self.threshold_value = threshold_value
 
         # Background subtractor
-        self.bg_subtractor = None  # TODO: Initialize cv2.createBackgroundSubtractorMOG2()
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
+            history=500,
+            varThreshold=16,
+            detectShadows=True
+        )
 
         # Statistics
         self.frame_count = 0
@@ -81,127 +85,137 @@ class MotionDetector:
     ) -> Tuple[bool, List[Tuple[int, int, int, int]], Optional[np.ndarray]]:
         """
         Detect motion in frame.
-
-        Args:
-            frame: Input frame (BGR color image)
-            draw_contours: If True, draw bounding boxes on motion areas
-
-        Returns:
-            Tuple containing:
-            - bool: True if motion detected, False otherwise
-            - List[Tuple]: List of bounding boxes (x, y, w, h) for motion areas
-            - np.ndarray: Processed frame with contours drawn (if draw_contours=True)
-
-        TODO:
-        1. Convert frame to grayscale
-        2. Apply Gaussian blur to reduce noise
-        3. Apply background subtractor to get foreground mask
-        4. Apply threshold to binary image
-        5. Dilate to fill holes in detected objects
-        6. Find contours in binary image
-        7. Filter contours by minimum area
-        8. For valid contours:
-            - Extract bounding box (x, y, w, h)
-            - If draw_contours=True, draw rectangle on frame
-        9. Increment frame_count
-        10. Return (has_motion, bounding_boxes, processed_frame)
         """
-        # TODO: Implement motion detection algorithm
-        pass
+        if frame is None:
+            return False
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(gray, self.blur_kernel, 0)
+
+        # Apply background subtractor to get foreground mask
+        fg_mask = self.bg_subtractor.apply(blurred)
+
+        # Apply threshold to binary image
+        _, thresh = cv2.threshold(fg_mask, self.threshold_value, 255, cv2.THRESH_BINARY)
+
+        # Dilate to fill holes in detect objects
+        kernel = np.ones((5, 5), np.uint8)
+        dilated = cv2.dilate(thresh, kernel, iterations=2)
+
+        # Find contours in binary image
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Filled contours by minium area not get bounding boxes
+        bounding_boxes = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area >= self.min_area:
+                x, y, w, h = cv2.boundingRect(contour)
+                bounding_boxes.append((x, y, w, h))
+
+        has_motion = len(bounding_boxes) > 0
+
+        # Draw contours if requested
+        processed_frame = frame.copy() if draw_contours else None
+        if draw_contours and has_motion:
+            for(x, y, w, h) in bounding_boxes:
+                cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        
+        # Update statistics
+        self.frame_count += 1
+        if has_motion:
+            self.motion_count += 1
+        
+        return has_motion, bounding_boxes, processed_frame
 
     def reset(self) -> None:
         """
         Reset background model.
-
-        TODO:
-        - Reinitialize background subtractor
-        - Clear previous frame
-        - Reset counters
-        - Useful after camera change or environment change
         """
-        # TODO: Implement reset
-        pass
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
+            history=500,
+            varThreshold=16,
+            detectShadows=True
+        )
+
+        # Reset counters
+        self.frame_count = 0
+        self.motion_count = 0
 
     def get_motion_mask(self, frame: np.ndarray) -> np.ndarray:
         """
         Get binary motion mask without contour detection.
-
-        Args:
-            frame: Input frame
-
-        Returns:
-            np.ndarray: Binary mask (white = motion, black = no motion)
-
-        TODO:
-        - Convert to grayscale
-        - Blur
-        - Apply background subtractor
-        - Threshold
-        - Return binary mask
-        - Useful for visualization
         """
-        # TODO: Implement mask generation
-        pass
+        if frame is None:
+            return None
+        
+         # Convert to grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Blur
+        blurred = cv2.GaussianBlur(gray, self.blur_kernel, 0)
+
+        # Apply backround subtractor
+        fg_mask = self.bg_subtractor.apply(blurred)
+        
+        # Threshold
+        _, thresh = cv2.threshold(fg_mask, self.threshold_value, 255, cv2.THRESH_BINARY)
+
+        return thresh
+
 
     def calibrate(self, frames: List[np.ndarray]) -> None:
         """
         Calibrate background model with initial frames.
-
-        Args:
-            frames: List of frames to use for calibration (no motion)
-
-        TODO:
-        - Process multiple frames to build accurate background model
-        - Apply each frame to background subtractor
-        - Don't detect motion, just train model
-        - Useful during system startup (first 2-3 seconds)
         """
-        # TODO: Implement calibration
-        pass
+        # Reset backround model
+        self.reset()
+
+        # Process each frame to build backround model
+        for frame in frames:
+            if frame is not None:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                blurred = cv2.GaussianBlur(gray, self.blur_kernel, 0)
+                # Apply with high learning rate for faster calibration
+                self.bg_subtractor.apply(blurred, learningRate=0.5)
+
+
 
     def set_min_area(self, min_area: int) -> None:
         """
         Update minimum area threshold.
-
-        Args:
-            min_area: New minimum area value
-
-        TODO:
-        - Validate min_area is positive
-        - Update self.min_area
-        - Useful for runtime adjustment
         """
         self.min_area = min_area
 
     def get_sensitivity(self) -> int:
         """
         Get current sensitivity (inverse of min_area).
-
-        Returns:
-            int: Sensitivity value (higher = more sensitive)
-
-        TODO:
-        - Calculate sensitivity from min_area
-        - Lower min_area = higher sensitivity
-        - Return meaningful value
         """
-        # TODO: Implement sensitivity calculation
-        pass
+        # Lower min_area = higher sensitivity
+        # Return inverse value (scaled to 0-100 range)
+        if self.min_area <= 0:
+            return 100
+        
+        # Map min_area (typical range 100-1000) to sensitivity (100-0)
+        max_area = 1000
+        sensitivity = int(100 * (1 - min(self.min_area, max_area) / max_area))
+        return max(0, min(100, sensitivity))
 
     def get_statistics(self) -> dict:
         """
         Get motion detection statistics.
-
-        Returns:
-            dict: Statistics including frame count, motion count, detection rate
-
-        TODO:
-        - Calculate detection rate: motion_count / frame_count
-        - Return dict with all statistics
-        - Useful for tuning and debugging
         """
-        # TODO: Implement statistics
-        pass
+        detection_rate = (self.motion_count / self.frame_count * 100) if self.frame_count > 0 else 0
+        return {
+            "frame_count": self.frame_count,
+            "motion_count": self.motion_count,
+            "detection_rate": round(detection_rate, 2),
+            "min_area": self.min_area,
+            "sensitivity": self.get_sensitivity()
+        }
 
     def __repr__(self) -> str:
         """String representation."""
