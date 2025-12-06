@@ -87,7 +87,7 @@ class SystemManager:
         - Register signal handlers (SIGINT, SIGTERM)
         """
         # Logger
-        self.logger = None  # TODO: Setup logger
+        self.logger = get_logger(__name__)
 
         # System state
         self.state = SystemState.DISARMED
@@ -128,6 +128,7 @@ class SystemManager:
         self.total_detections = 0
         self.person_detections = 0
         self.animal_detections = 0
+        self._last_fps = 0.0  # Track actual FPS
 
     def initialize(self) -> bool:
         """
@@ -159,9 +160,6 @@ class SystemManager:
             else:
                 self.logger.info(f"YOLO detector initialized: {self.yolo_detector}")
             
-
-
-
             # 4. Initialize Flask server with callbacks
             self.logger.info("Initializing Flask server...")
             self.flask_server = FlaskServer()
@@ -193,9 +191,6 @@ class SystemManager:
     def arm(self) -> bool:
         """
         Arm the security system.
-
-        Returns:
-            bool: True if armed successfully
         """
         try:
             self.logger.info("Arming system...")
@@ -338,7 +333,7 @@ class SystemManager:
                 if sleep_time > 0:
                     time.sleep(sleep_time)
                 
-                # Log performance 
+                # Log performance
                 if self.yolo_detector.inference_count % 50 == 0 and self.yolo_detector.inference_count > 0:
                     stats = self.yolo_detector.get_statistics()
                     self.logger.info(
@@ -346,6 +341,11 @@ class SystemManager:
                     f"{stats['person_detections']} persons, "
                     f"{stats['animal_detections']} animals"
                 )
+
+                # Calculate and store FPS
+                actual_loop_time = time.time() - loop_start_time
+                if actual_loop_time > 0:
+                    self._last_fps = 1.0 / actual_loop_time
         except Exception as e:
             self.logger.error(f"Error in detection loop: {e}", exc_info=True)
         
@@ -484,13 +484,22 @@ class SystemManager:
 
     def get_status(self) -> dict:
         """Get current system status with proper format for dashboard."""
-        from src.utils.helpers import get_cpu_usage, get_memory_usage, get_cpu_temperature, format_uptime
+        from src.utils.helpers import get_cpu_usage, get_memory_usage, get_cpu_temperature
         import time
 
-        # Calculate uptime
-        uptime_seconds = time.time() - self._start_time if hasattr(self, '_start_time') else 0
+        # Calculate uptime in SECONDS (not formatted)
+        uptime_seconds = time.time() - self.start_time if hasattr(self, 'start_time') and isinstance(self.start_time, (int, float)) else 0
 
-        # Get system info
+        # Get CPU temperature (handle None on Mac)
+        cpu_temp = get_cpu_temperature()
+
+        # Calculate actual camera FPS
+        camera_fps = 0.0
+        if self.camera and hasattr(self.camera, 'get_fps'):
+            camera_fps = self.camera.get_fps()
+        elif hasattr(self, '_last_fps'):
+            camera_fps = self._last_fps
+
         status = {
             # Frontend expects "state" not "armed"
             "state": self.state.value if hasattr(self, 'state') else "disarmed",
@@ -498,13 +507,13 @@ class SystemManager:
             # Numeric values, not formatted strings
             "cpu_usage": round(get_cpu_usage(), 1),
             "ram_usage": round(get_memory_usage(), 1),
-            "temperature": get_cpu_temperature(),  # Will return None on Mac if not available
+            "temperature": round(cpu_temp, 1) if cpu_temp is not None else None,
 
-            # Keep as string
-            "uptime": format_uptime(uptime_seconds),
+            # CRITICAL: Send uptime as NUMBER (seconds), not formatted string
+            "uptime": uptime_seconds,
 
             # Calculate actual camera FPS
-            "camera_fps": round(self.camera_fps, 1) if hasattr(self, 'camera_fps') else 0,
+            "camera_fps": round(camera_fps, 1),
 
             # Add detection statistics
             "detections": {
@@ -695,15 +704,26 @@ class SystemManager:
         sys.exit(0)
 
     def get_statistics(self) -> dict:
-        """
-        Get system statistics.
-
-        TODO:
-        - Return dict with all statistics
-        - Include detection counts, rates, uptime, etc.
-        """
-        # TODO: Implement statistics retrieval
-        pass
+        """Get system statistics."""
+        stats = {
+            'total_detections': self.total_detections,
+            'person_detections': self.person_detections,
+            'animal_detections': self.animal_detections,
+            'uptime_seconds': self.get_uptime(),
+            'state': self.state.value
+        }
+        
+        # Add component statistics if available
+        if self.yolo_detector:
+            stats['yolo'] = self.yolo_detector.get_statistics()
+        if self.motion_detector:
+            stats['motion'] = self.motion_detector.get_statistics()
+        if self.alert_manager:
+            stats['alerts'] = self.alert_manager.get_statistics()
+        if self.video_streamer:
+            stats['streaming'] = self.video_streamer.get_statistics()
+        
+        return stats
 
     def __repr__(self) -> str:
         """String representation."""

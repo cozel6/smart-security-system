@@ -31,13 +31,10 @@ let currentState = 'unknown';
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Dashboard initializing...');
 
-    // TODO: Initialize dashboard
     initializeDashboard();
 
-    // TODO: Start periodic updates
     startPeriodicUpdates();
 
-    // TODO: Setup event listeners
     setupEventListeners();
 
     console.log('Dashboard ready!');
@@ -50,11 +47,6 @@ document.addEventListener('DOMContentLoaded', function() {
 function initializeDashboard() {
     /**
      * Initialize dashboard components
-     *
-     * TODO:
-     * - Fetch initial status
-     * - Update UI elements
-     * - Setup clock
      */
 
     // Update current time
@@ -68,13 +60,7 @@ function initializeDashboard() {
 function setupEventListeners() {
     /**
      * Setup event listeners for buttons and controls
-     *
-     * TODO:
-     * - Arm button click
-     * - Disarm button click
-     * - Keyboard shortcuts (optional)
      */
-
     // Arm/Disarm buttons already have onclick in HTML
     // Could add keyboard shortcuts here
 }
@@ -86,11 +72,6 @@ function setupEventListeners() {
 function startPeriodicUpdates() {
     /**
      * Start periodic status updates
-     *
-     * TODO:
-     * - Clear existing timer if any
-     * - Set new interval for updates
-     * - Fetch status on interval
      */
 
     if (updateTimer) {
@@ -119,12 +100,6 @@ function stopPeriodicUpdates() {
 async function fetchSystemStatus() {
     /**
      * Fetch current system status from API
-     *
-     * TODO:
-     * - GET /api/status
-     * - Parse response
-     * - Update UI elements
-     * - Handle errors
      */
 
     try {
@@ -136,7 +111,6 @@ async function fetchSystemStatus() {
 
         const data = await response.json();
 
-        // TODO: Update UI with fetched data
         updateSystemState(data.state);
         updateSystemMetrics(data);
         updateDetectionStats(data.detections);
@@ -151,11 +125,6 @@ async function fetchSystemStatus() {
 async function armSystem() {
     /**
      * Arm the security system
-     *
-     * TODO:
-     * - POST /api/arm
-     * - Update UI based on response
-     * - Show success/error message
      */
 
     try {
@@ -271,17 +240,6 @@ function updateSystemState(state) {
 function updateSystemMetrics(data) {
     /**
      * Update system metrics (CPU, RAM, Temperature, etc.)
-     *
-     * Args:
-     *   data: Status object with metrics
-     *
-     * TODO:
-     * - Update CPU usage and progress bar
-     * - Update RAM usage and progress bar
-     * - Update temperature and progress bar
-     * - Update uptime
-     * - Update camera FPS
-     * - Change colors based on thresholds
      */
 
     // CPU Usage
@@ -313,7 +271,7 @@ function updateSystemMetrics(data) {
     }
 
     // Temperature
-    if (data.temperature !== undefined) {
+    if (data.temperature !== undefined && data.temperature !== null) {
         const tempValue = Math.round(data.temperature);
         document.getElementById('temperature').textContent = `${tempValue}°C`;
 
@@ -330,6 +288,11 @@ function updateSystemMetrics(data) {
         } else {
             tempProgress.classList.add('bg-danger');
         }
+    } else {
+        // Temperature not available (Mac)
+        document.getElementById('temperature').textContent = 'N/A';
+        const tempProgress = document.getElementById('temp-progress');
+        tempProgress.style.width = '0%';
     }
 
     // Uptime
@@ -346,15 +309,6 @@ function updateSystemMetrics(data) {
 function updateDetectionStats(detections) {
     /**
      * Update detection statistics
-     *
-     * Args:
-     *   detections: Object with total, person, animal counts
-     *
-     * TODO:
-     * - Update total detections
-     * - Update person detections
-     * - Update animal detections
-     * - Update last detection time
      */
 
     if (!detections) return;
@@ -392,12 +346,6 @@ function updateClock() {
 function formatUptime(seconds) {
     /**
      * Format uptime seconds to readable string
-     *
-     * Args:
-     *   seconds: Uptime in seconds
-     *
-     * Returns:
-     *   Formatted string like "2h 15m 30s"
      */
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -409,12 +357,6 @@ function formatUptime(seconds) {
 function formatTimestamp(isoString) {
     /**
      * Format ISO timestamp to readable string
-     *
-     * Args:
-     *   isoString: ISO 8601 timestamp
-     *
-     * Returns:
-     *   Formatted string
      */
     const date = new Date(isoString);
     return date.toLocaleString();
@@ -427,8 +369,6 @@ function formatTimestamp(isoString) {
 function showSuccess(message) {
     /**
      * Show success notification
-     *
-     * TODO: Implement toast notifications or alerts
      */
     console.log('[SUCCESS]', message);
     // Could use Bootstrap Toast or simple alert
@@ -438,8 +378,6 @@ function showSuccess(message) {
 function showError(message) {
     /**
      * Show error notification
-     *
-     * TODO: Implement toast notifications or alerts
      */
     console.error('[ERROR]', message);
     alert('Error: ' + message);
@@ -448,8 +386,6 @@ function showError(message) {
 function showInfo(message) {
     /**
      * Show info notification
-     *
-     * TODO: Implement toast notifications
      */
     console.log('[INFO]', message);
 }

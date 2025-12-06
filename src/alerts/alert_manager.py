@@ -122,14 +122,22 @@ class AlertManager:
     def start(self) -> None:
         """
         Start alert processing thread.
-
-        TODO:
-        - Create processing thread (target=self._process_loop)
-        - Start thread with daemon=True
-        - Log startup
         """
-        # TODO: Implement thread startup
-        pass
+        if self.processing_thread is not None and self.processing_thread.is_alive():
+            print("Alert manager already running")
+            return
+        
+        # Clear stop event
+        self.processing_thread = threading.Thread(
+            target= self._process_loop,
+            daemon= True
+        )
+
+        # Start thread
+        self.processing_thread.start()
+
+        print("Alert manager started")
+
 
     def add_alert(
         self,
@@ -139,110 +147,156 @@ class AlertManager:
     ) -> None:
         """
         Add alert to queue.
-
-        Args:
-            level: Alert priority level
-            message: Alert message
-            frame: Optional image frame
-
-        TODO:
-        - Create Alert object
-        - Add to priority queue
-        - Increment alert_count
-        - Log alert added
         """
-        # TODO: Implement alert queuing
-        pass
+        # Create Alert object
+        alert = Alert(
+            level=level,
+            message=message,
+            frame=frame
+        )
+        # Add to priority queue
+        self.queue.put(alert)
+
+        # Incremnt alert count
+
+        self.alert_count += 1
+
+        print(f"Alert queued: {alert.level.name} - {message[:50]}")
 
     def _process_loop(self) -> None:
         """
         Main processing loop (runs in thread).
-
-        TODO:
-        - Loop while not stop_event.is_set()
-        - Try to get alert from queue (with timeout)
-        - Check cooldown:
-            - If in cooldown, put alert back in queue and wait
-            - If cooldown passed, send alert
-        - Handle Empty exception (no alerts)
-        - Sleep briefly between iterations
         """
-        # TODO: Implement processing loop
-        pass
+        while not self.stop_event.is_set():
+            try:
+                # Try to get alert from queue (without timeout)
+                try:
+                    alert = self.queue.get(timeout=1.0)
+                except Empty:
+                    # No alerts in queue, contiune loop
+                    continue
+                # Check cooldown
+                if self._is_in_cooldown():
+                    # In cooldown - put alert back and wait
+                    wait_time = self._time_until_next_alert()
+
+                    # Put alert back in queue 
+                    self.queue.put(alert)
+
+                    #  Wait for cooldown to expire (but check stop_event)
+                    if wait_time > 0:
+                        self.stop_event.wait(min(wait_time, 1.0))
+                    
+                    continue
+
+                # Cooldown passed - send alert
+
+                success = self._send_alert(alert)
+
+                if not success:
+                    # Failed to sent, increment droppped count
+                    self.alerts_dropped += 1
+                
+                # Breif sleep between iteration
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"Error in alert processing loop: {e}")
+                time.sleep(0.1)
 
     def _send_alert(self, alert: Alert) -> bool:
         """
         Send alert via Telegram.
-
-        Args:
-            alert: Alert to send
-
-        Returns:
-            bool: True if sent successfully
-
-        TODO:
-        - Check if telegram_bot is configured
-        - Format alert message with level emoji
-        - Call telegram_bot.send_alert()
-        - Update last_alert_time
-        - Increment alerts_sent
-        - Return True if successful
-        - Handle send errors gracefully
         """
-        # TODO: Implement alert sending
-        pass
+        try:
+            # Check if telegram bot is configured
+            if self.telegram_bot is None:
+                print(f"Telegram bot not configured, skipping alert")
+                return False
+            
+            # Format alert message with level emoji
+            emoji_map = {
+                AlertLevel.CRITICAL: "🚨",
+                AlertLevel.HIGH: "⚠️",
+                AlertLevel.LOW: "ℹ️",
+                AlertLevel.NONE: "✓"
+            }
+            emoji = emoji_map.get(alert.level, "📢")
+            formatted_message = f"{emoji} {alert.level.name}: {alert.message}"
+
+            # Call telegram_bot.send_alert()
+            success = self.telegram_bot.send_alert(
+                message=formatted_message,
+                image=alert.frame
+            )
+            if success:
+                # Update last alert time
+                self.last_alert_time = datetime.now()
+
+                # Increment alert sent
+                self.alerts_sent += 1
+
+                print(f"Alert sent successfully: {alert.level.name}")
+
+                return True
+            else:
+                print(f"Failed to send alert: {alert.level.name}")
+                return False
+            
+        except Exception as e:
+            print(f"Error sending alert: {e}")
+            return False
+                
 
     def _is_in_cooldown(self) -> bool:
         """
         Check if in cooldown period.
-
-        Returns:
-            bool: True if in cooldown, False if can send
-
-        TODO:
-        - If no previous alert, return False
-        - Calculate time since last alert
-        - Return True if less than cooldown seconds
-        - Consider priority: CRITICAL alerts might bypass cooldown
         """
-        # TODO: Implement cooldown check
-        pass
+        # If no previous alert, not in cooldown
+        if self.last_alert_time is None:
+            return False
+        
+        # Calculate time since last alert
+        time_since_last = (datetime.now() - self.last_alert_time).total_seconds()
+
+        # Retrun true if less that cooldown seconds
+        return time_since_last < self.cooldown
+    
 
     def _time_until_next_alert(self) -> float:
         """
         Calculate seconds until next alert can be sent.
-
-        Returns:
-            float: Seconds until cooldown expires (0 if can send now)
-
-        TODO:
-        - Calculate remaining cooldown time
-        - Return 0 if cooldown expired
         """
-        # TODO: Implement cooldown calculation
-        pass
+        # If no previous alert, can sent now
+        if self.last_alert_time is None:
+            return 0.0
+        
+        # Calulate time since last alert
+        time_since_last = (datetime.now() - self.last_alert_time).total_seconds()
+
+        # Calulate remaining cooldown time
+        remaining = self.cooldown - time_since_last
+
+        # Rest 0 if cooldown expired
+        return max(0.0, remaining)
+
 
     def clear_queue(self) -> int:
         """
         Clear all queued alerts.
-
-        Returns:
-            int: Number of alerts cleared
-
-        TODO:
-        - Count alerts in queue
-        - Clear queue
-        - Return count
         """
-        # TODO: Implement queue clear
-        pass
+        # Count alerts in queue
+        count = self.queue.qszie()
+
+        # Clear queue by creating new PriorityQueue
+        self.queue = PriorityQueue()
+
+        print(f"Cleared {count} alerts. form queue")
+
+        return count
 
     def get_queue_size(self) -> int:
         """
         Get number of queued alerts.
-
-        Returns:
-            int: Queue size
         """
         return self.queue.qsize()
 
@@ -262,33 +316,46 @@ class AlertManager:
     def get_statistics(self) -> Dict:
         """
         Get alert statistics.
-
-        Returns:
-            Dict: Statistics including sent, dropped, queue size
-
-        TODO:
-        - Return dict with:
-            - alert_count (total received)
-            - alerts_sent
-            - alerts_dropped
-            - queue_size
-            - send_rate (sent / count)
         """
-        # TODO: Implement statistics
-        pass
+        # Calulate send rate
+        send_rate = (
+            self.alerts_sent / self.alert_count * 100
+            if self.alert_count > 0
+            else 0.0
+        )
+
+        return {
+            'alert_count': self.alert_count,
+            'alerts_sent': self.alerts_sent,
+            'alerts_dropped': self.alerts_dropped,
+            'queue_size': self.queue.qsize(),
+            'send_rate': round(send_rate, 2)
+        }   
+
 
     def stop(self) -> None:
         """
         Stop alert manager.
-
-        TODO:
-        - Set stop event
-        - Wait for processing thread
-        - Clear queue
-        - Log statistics
         """
-        # TODO: Implement shutdown
-        pass
+        print("Stopping alert manager...")
+    
+        # Set stop event
+        self.stop_event.set()
+        
+        # Wait for processing thread to finish
+        if self.processing_thread is not None and self.processing_thread.is_alive():
+            self.processing_thread.join(timeout=5.0)
+        
+        # Clear queue
+        cleared = self.clear_queue()
+        
+        # Log statistics
+        stats = self.get_statistics()
+        print(f"Alert manager stopped:")
+        print(f"  Total alerts: {stats['alert_count']}")
+        print(f"  Alerts sent: {stats['alerts_sent']}")
+        print(f"  Alerts dropped: {stats['alerts_dropped']}")
+        print(f"  Cleared from queue: {cleared}")
 
     def __repr__(self) -> str:
         """String representation."""
