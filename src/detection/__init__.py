@@ -7,6 +7,6 @@ This package contains detection algorithms:
 """
 
 from .motion_detector import MotionDetector
-from .yolo_detector import YOLODetector
+from .yolo_detector import YOLODetector, DetectionType, AlertLevel
 
-__all__ = ['MotionDetector', 'YOLODetector']
+__all__ = ['MotionDetector', 'YOLODetector', 'DetectionType', 'AlertLevel']

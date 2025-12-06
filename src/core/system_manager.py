@@ -37,6 +37,7 @@ Usage:
         system.stop()
 """
 
+from pathlib import Path
 import threading
 import time
 from enum import Enum
@@ -44,14 +45,18 @@ from typing import Optional
 from datetime import datetime
 import signal
 import sys
+import psutil
+import numpy as np
+import cv2
 
-from src.hardware import Camera, PIRSensor, LEDController, Buzzer
-from src.detection import MotionDetector, YOLODetector, DetectionType, AlertLevel
-from src.alerts import TelegramBot, AlertManager
+#from src.hardware import PIRSensor, LEDController, Buzzer
+#from src.alerts import TelegramBot, AlertManager
+from src.detection import  YOLODetector, DetectionType, AlertLevel # , MotionDetector
 from src.streaming import FlaskServer, VideoStreamer
 from src.utils.logger import setup_logger, get_logger
 from src.utils import helpers
 from config.settings import settings
+from src.hardware import Camera 
 
 
 class SystemState(Enum):
@@ -82,7 +87,7 @@ class SystemManager:
         - Register signal handlers (SIGINT, SIGTERM)
         """
         # Logger
-        self.logger = None  # TODO: Setup logger
+        self.logger = get_logger(__name__)
 
         # System state
         self.state = SystemState.DISARMED
@@ -110,61 +115,123 @@ class SystemManager:
         self.detection_thread = None
         self.stop_event = threading.Event()
 
+        # Latest annotated frame for streaming
+        self.latest_annotated_frame = None
+        self.frame_lock = threading.Lock()
+
+        # Snapshot cooldown tracking
+        self.last_person_snapshot_time = 0
+        self.last_animal_snapshot_time = 0
+        self.snapshot_cooldown = 10  # seconds between snapshots
+
         # Statistics
         self.total_detections = 0
         self.person_detections = 0
         self.animal_detections = 0
+        self._last_fps = 0.0  # Track actual FPS
 
     def initialize(self) -> bool:
         """
         Initialize all system components.
-
-        Returns:
-            bool: True if initialization successful
-
-        TODO:
-        1. Setup logger
-        2. Log system startup
-        3. Initialize hardware components:
-            - Camera (start capture)
-            - PIR sensor (setup GPIO, register callback)
-            - LED controller (setup GPIO)
-            - Buzzer (setup GPIO)
-        4. Initialize detection components:
-            - Motion detector
-            - YOLO detector (load model)
-        5. Initialize alert components:
-            - Telegram bot (register callbacks)
-            - Alert manager
-        6. Initialize streaming components:
-            - Video streamer
-            - Flask server (register callbacks)
-        7. Start all services (Telegram bot, Flask server, Alert manager)
-        8. Set initial state (disarmed, green LED off)
-        9. Return True if successful, False if any component fails
-        10. Handle exceptions and log errors
         """
-        # TODO: Implement component initialization
-        pass
+        try:
+            # 1. Setup logger
+            self.logger = get_logger("_name_")
+            self.logger.info("=" * 60)
+            self.logger.info("Initializing Smart Security System...")
+            self.logger.info("=" * 60)
+
+            # 2. Initialization camera
+            self.logger.info("Initializing camera...")
+            self.camera = Camera()
+            if not self.camera.start():
+                self.logger.error("Failed to start camera")
+                return False
+            self.logger.info(f"Camera initialized: {self.camera}")
+
+            # 3. Initialize YOLO detector
+            self.logger.info("Initializing YOLO detector...")
+            from src.detection.yolo_detector import YOLODetector
+            self.yolo_detector = YOLODetector()
+
+            if not self.yolo_detector.load_model():
+                self.logger.error("Failed to load yolo model")
+                # Continue anyway - detection will be disabled
+            else:
+                self.logger.info(f"YOLO detector initialized: {self.yolo_detector}")
+            
+            # 4. Initialize Flask server with callbacks
+            self.logger.info("Initializing Flask server...")
+            self.flask_server = FlaskServer()
+            
+
+            # 5. Start Flask server
+            self.logger.info("Registering Flask callbacks...")
+            self.flask_server.register_callbacks(
+                get_frame=self.get_current_frame,
+                get_status=self.get_status,
+                arm=self.arm,
+                disarm=self.disarm,
+            )
+            self.flask_server.start()
+            self.start_time = time.time()
+            self._is_armed = False
+            return True
+        
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"Initialization failed: {e}", exc_info=True)
+            else:
+                print(f"ERROR: Initialization failed: {e}")
+            return False
+    
+
+
 
     def arm(self) -> bool:
         """
         Arm the security system.
-
-        Returns:
-            bool: True if armed successfully
-
-        TODO:
-        - Check if system is initialized
-        - Start detection thread
-        - Set state to ARMED
-        - Turn on green LED (armed indicator)
-        - Send Telegram message: "System armed"
-        - Log event
-        - Return True if successful
         """
-        # TODO: Implement arm logic
-        pass
+        try:
+            self.logger.info("Arming system...")
+            
+            # 1. Check if already armed
+            if self.state == SystemState.ARMED:
+                self.logger.warning("System is already armed")
+                return True
+            
+            # 2. Set state to ARMED
+            self.state = SystemState.ARMED
+            
+            # 3. Turn on green LED (armed indicator) - if available
+            if self.led_controller:
+                self.led_controller.set_armed()
+            
+            # 4. Start PIR sensor monitoring - Pentru Raspberry Pi
+            if self.pir_sensor:
+                self.pir_sensor.start()
+            
+            # 5. Start detection thread
+            if self.yolo_detector and self.yolo_detector.model_loaded:
+                self.logger.info("Starting detection thread...")
+                self.stop_event.clear()
+                self.detection_thread = threading.Thread(
+                    target=self._detection_loop,
+                    daemon=True,
+                    name="DetectionThread"
+                )
+                self.detection_thread.start()
+                self.logger.info("✓ Detection thread started")
+            else:
+                self.logger.warning("YOLO detector not available, detection disabled")
+
+            self.logger.info("System armed successfully")
+
+            return True
+        
+        except Exception as e:
+            self.logger.error(f"Failed to arm system: {e}", exc_info=True)
+            return False
 
     def disarm(self) -> bool:
         """
@@ -172,49 +239,119 @@ class SystemManager:
 
         Returns:
             bool: True if disarmed successfully
-
-        TODO:
-        - Stop detection thread
-        - Set state to DISARMED
-        - Turn off all LEDs
-        - Stop any active alarm
-        - Send Telegram message: "System disarmed"
-        - Log event
-        - Return True if successful
         """
-        # TODO: Implement disarm logic
-        pass
+
+        try:
+            self.logger.info("Disarming system...")
+            
+            # 1. Stop detection thread if running
+            if self.detection_thread and self.detection_thread.is_alive():
+                self.stop_event.set()
+                self.detection_thread.join(timeout=5)
+                self.detection_thread = None
+                self.stop_event.clear()
+            
+            # 2. Set state to DISARMED
+            self.state = SystemState.DISARMED
+            
+            # 3. Turn off LEDs (if available)
+            if self.led_controller:
+                self.led_controller.turn_off_all()
+            
+            # 4. Stop buzzer (if available)
+            if self.buzzer:
+                self.buzzer.stop()
+            
+            # 5. Stop PIR sensor (if available) - Pentru Raspberry Pi
+            if self.pir_sensor:
+                self.pir_sensor.stop()
+            
+            self.logger.info("System disarmed successfully")
+            return True
+        
+        except Exception as e:
+            self.logger.error(f"Failed to disarm system: {e}", exc_info=True)
+            return False
+            
+            
 
     def _detection_loop(self) -> None:
         """
         Main detection loop (runs in separate thread).
-
         This is the core monitoring loop that processes frames and detects intrusions.
-
-        TODO:
-        1. Loop while not stop_event.is_set() and state == ARMED
-        2. Get frame from camera
-        3. If no frame, sleep and continue
-        4. Check PIR sensor state
-        5. If PIR triggered or previous motion:
-            a. Run motion detection (OpenCV)
-            b. If motion detected:
-                - Run YOLO detection
-                - Classify result (person/animal/both)
-                - Determine alert level
-                - If person detected:
-                    - Set state to ALARM
-                    - Trigger red LED and buzzer
-                    - Queue alert with high priority
-                - If only animal:
-                    - Queue alert with low priority
-                - Draw detection boxes on frame
-        6. Update video streamer with processed frame
-        7. Sleep briefly to control loop rate
-        8. Handle exceptions
         """
-        # TODO: Implement detection loop
-        pass
+        self.logger.info("Detection loop started")
+
+        # Target FPS for detection (lower than camera FPS)
+        detection_fps = 5 # Run detection at 5 fps
+        frame_interval = 1.0 / detection_fps
+
+        consecutive_empty_frames = 0
+        max_empty_frames = 10
+
+        try:
+            while not self.stop_event.is_set():
+                # Check if still armed
+                if self.state != SystemState.ARMED and self.state != SystemState.ALARM:
+                    self.logger.info("Detection loop: System not armed, pausing...")
+                    time.sleep(1)
+                    continue
+                loop_start_time = time.time()
+
+                # 1. Get frame from camera
+                frame = None
+                if self.camera and self.camera.is_opened():
+                    frame = self.camera.get_frame(timeout=0.5)
+                
+                # 2. Check frame is valid
+                if frame is None:
+                    consecutive_empty_frames += 1
+                    if consecutive_empty_frames >= max_empty_frames:
+                        self.logger.error("To many failed frame reads, stopping detection")
+                        break
+                    time.sleep(0.1)
+                    continue
+                # Reset empty frame counter 
+                consecutive_empty_frames = 0
+
+                # 3. YOLO Detection
+                if self.yolo_detector and self.yolo_detector.model_loaded:
+                    detection_result = self.yolo_detector.detect(frame, draw=True)
+
+                    # Update latest annotated frame for streaming
+                    # Use annotated frame if available, otherwise use original frame
+                    annotated = detection_result.get('frame')
+                    with self.frame_lock:
+                        self.latest_annotated_frame = annotated if annotated is not None else frame
+
+                    # 4. Process detection results
+                    if detection_result['type'] != DetectionType.NONE:
+                        self._process_detection(frame, detection_result)
+                # 5. Control loop rate
+                elapsed = time.time() - loop_start_time
+                sleep_time = frame_interval - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                
+                # Log performance
+                if self.yolo_detector.inference_count % 50 == 0 and self.yolo_detector.inference_count > 0:
+                    stats = self.yolo_detector.get_statistics()
+                    self.logger.info(
+                    f"Detection stats: {stats['inference_count']} inferences, "
+                    f"{stats['person_detections']} persons, "
+                    f"{stats['animal_detections']} animals"
+                )
+
+                # Calculate and store FPS
+                actual_loop_time = time.time() - loop_start_time
+                if actual_loop_time > 0:
+                    self._last_fps = 1.0 / actual_loop_time
+        except Exception as e:
+            self.logger.error(f"Error in detection loop: {e}", exc_info=True)
+        
+        finally:
+            self.logger.info("Detection loop stopped")
+
 
     def _handle_pir_trigger(self, channel: int) -> None:
         """
@@ -239,87 +376,256 @@ class SystemManager:
     ) -> None:
         """
         Process YOLO detection result and trigger alerts.
-
-        Args:
-            frame: Detected frame
-            detection_result: YOLO detection dictionary
-
-        TODO:
-        - Extract detection type and alert level
-        - If person detected:
-            - Activate alarm (red LED, buzzer)
-            - Queue CRITICAL alert
-            - Save snapshot
-            - Increment statistics
-        - If animal only:
-            - Queue LOW alert
-            - Save snapshot
-        - Log detection
         """
-        # TODO: Implement detection processing
-        pass
+        try:
+            detection_type = detection_result['type']
+            alert_level = detection_result['alert_level']
+            person_count = detection_result['person_count']
+            animal_count = detection_result['animal_count']
+
+            # Log detection
+            self.logger.info(
+                f"Detection: {detection_type.value} - "
+                f"Alert: {alert_level.value} - "
+                f"Persons: {person_count}, Animals: {animal_count}"
+            )
+            # Update statistics
+            self.total_detections += 1
+            if person_count > 0:
+                self.person_detections += person_count
+            if animal_count > 0:
+                self.animal_detections += animal_count
+            
+            # Handle PERSON detection (CRITICAL alert)
+            if detection_type == DetectionType.PERSON or detection_type == DetectionType.BOTH:
+                self.logger.warning(f"CRITICAL: Person detected! Count: {person_count}")
+
+                # Trigger alarm
+                self.trigger_alarm()
+
+                # Save snapshot (with cooldown)
+                current_time = time.time()
+                if current_time - self.last_person_snapshot_time >= self.snapshot_cooldown:
+                    try:
+                        from pathlib import Path
+                        from datetime import datetime
+
+                        Path("snapshots").mkdir(parents=True, exist_ok=True)
+
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                        filename = f"snapshot_{timestamp}.jpg"
+                        snapshot_path = f"snapshots/{filename}"
+
+                        cv2.imwrite(snapshot_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                        self.logger.info(f"Snapshot saved: {snapshot_path}")
+
+                        # Update last snapshot time
+                        self.last_person_snapshot_time = current_time
+
+                    except Exception as e:
+                        self.logger.error(f"Failed to save snapshot: {e}")
+                else:
+                    # Skip snapshot due to cooldown
+                    remaining = self.snapshot_cooldown - (current_time - self.last_person_snapshot_time)
+                    self.logger.debug(f"Snapshot skipped (cooldown: {remaining:.1f}s remaining)")
+
+                #Queue alert (if alert manager available)
+                if self.alert_manager:
+                    self.alert_manager.queue_alert(
+                        alert_type="person_detected",
+                        alert_level=alert_level,
+                        message=f"Person detected! Count: {person_count}",
+                        snapshot_path=snapshot_path
+                    )
+                # Send Telegram alert (if bot available)
+                if self.telegram_bot:
+                    self.telegram_bot.send_alert(
+                        f"🚨 CRITICAL ALERT 🚨\n\n"
+                        f"Person detected!\n"
+                        f"Persons: {person_count}\n"
+                        f"Animals: {animal_count}\n"
+                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
+                # Handle ANIMAL-only detection (LOW alert)
+            elif detection_type == DetectionType.ANIMAL:
+                self.logger.info(f"Animal detected: {animal_count}")
+
+                # Save snapshot with cooldown (animals have longer cooldown)
+                current_time = time.time()
+                animal_cooldown = self.snapshot_cooldown * 3  # 30 seconds for animals
+                if current_time - self.last_animal_snapshot_time >= animal_cooldown:
+                    try:
+                        from pathlib import Path
+                        from datetime import datetime
+
+                        Path("snapshots").mkdir(parents=True, exist_ok=True)
+
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                        filename = f"snapshot_animal_{timestamp}.jpg"
+                        snapshot_path = f"snapshots/{filename}"
+
+                        cv2.imwrite(snapshot_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                        self.logger.info(f"Animal snapshot saved: {snapshot_path}")
+
+                        # Update last snapshot time
+                        self.last_animal_snapshot_time = current_time
+
+                    except Exception as e:
+                        self.logger.error(f"Failed to save snapshot: {e}")
+                else:
+                    remaining = animal_cooldown - (current_time - self.last_animal_snapshot_time)
+                    self.logger.debug(f"Animal snapshot skipped (cooldown: {remaining:.1f}s remaining)")
+
+        except Exception as e:
+            self.logger.error(f"Error processing detection: {e}", exc_info=True)
+
+
+
 
     def get_status(self) -> dict:
-        """
-        Get current system status.
+        """Get current system status with proper format for dashboard."""
+        from src.utils.helpers import get_cpu_usage, get_memory_usage, get_cpu_temperature
+        import time
 
-        Returns:
-            dict: System status information
+        # Calculate uptime in SECONDS (not formatted)
+        uptime_seconds = time.time() - self.start_time if hasattr(self, 'start_time') and isinstance(self.start_time, (int, float)) else 0
 
-        TODO:
-        - Return dict with:
-            - state (armed/disarmed/alarm)
-            - uptime (seconds)
-            - cpu_usage
-            - ram_usage
-            - temperature (Raspberry Pi)
-            - camera_fps
-            - total_detections
-            - person_detections
-            - animal_detections
-            - last_detection_time
-        - Use helpers for system info
-        """
-        # TODO: Implement status retrieval
-        pass
+        # Get CPU temperature (handle None on Mac)
+        cpu_temp = get_cpu_temperature()
+
+        # Calculate actual camera FPS
+        camera_fps = 0.0
+        if self.camera and hasattr(self.camera, 'get_fps'):
+            camera_fps = self.camera.get_fps()
+        elif hasattr(self, '_last_fps'):
+            camera_fps = self._last_fps
+
+        status = {
+            # Frontend expects "state" not "armed"
+            "state": self.state.value if hasattr(self, 'state') else "disarmed",
+
+            # Numeric values, not formatted strings
+            "cpu_usage": round(get_cpu_usage(), 1),
+            "ram_usage": round(get_memory_usage(), 1),
+            "temperature": round(cpu_temp, 1) if cpu_temp is not None else None,
+
+            # CRITICAL: Send uptime as NUMBER (seconds), not formatted string
+            "uptime": uptime_seconds,
+
+            # Calculate actual camera FPS
+            "camera_fps": round(camera_fps, 1),
+
+            # Add detection statistics
+            "detections": {
+                "total": self.total_detections,
+                "person": self.person_detections,
+                "animal": self.animal_detections
+            },
+
+            # Last detection timestamp
+            "last_detection": self.last_detection_time.isoformat() if hasattr(self, 'last_detection_time') and self.last_detection_time else None
+        }
+        return status
 
     def get_current_frame(self):
         """
         Get current camera frame (for snapshots/streaming).
-
-        TODO:
-        - Get frame from camera
-        - Return frame
-        - Handle camera not initialized
+        Returns annotated frame with detections if available, otherwise raw camera frame.
         """
-        # TODO: Implement frame retrieval
-        pass
+        # Try to return annotated frame first (with YOLO detections)
+        if self.state == SystemState.ARMED or self.state == SystemState.ALARM:
+            with self.frame_lock:
+                if self.latest_annotated_frame is not None:
+                    return self.latest_annotated_frame.copy()
+
+        # Fallback to raw camera frame
+        if self.camera and self.camera.is_opened():
+            frame = self.camera.get_frame(timeout=0.5)
+            if frame is not None:
+                return frame
+
+        # Fallback to dummy frame if camera unavailable
+        return self._generate_dummy_frame()
+        
+
+    def _generate_dummy_frame(self) -> np.ndarray:
+        """
+        Generate colored test frame with system info (for testing without camera).
+        
+        Returns:
+            np.ndarray: 640x480 BGR frame with text overlay
+        """
+        # Create blank frame (480 height x 640 width x 3 color channels)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        # Fill with orange color (BGR format: Blue, Green, Red)
+        frame[:] = (60, 120, 180)  
+        
+        # Add text overlays
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        white = (255, 255, 255)
+        
+        # Title
+        cv2.putText(frame, "TEST MODE - NO CAMERA", (140, 180), 
+                    font, 0.9, white, 2, cv2.LINE_AA)
+        
+        # Current timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cv2.putText(frame, timestamp, (200, 240), 
+                    font, 0.7, white, 2, cv2.LINE_AA)
+        
+        # System state
+        state_text = f"State: {self.state.value.upper()}"
+        state_color = (0, 255, 0) if self.state == SystemState.ARMED else (100, 100, 100)
+        cv2.putText(frame, state_text, (230, 300), 
+                    font, 0.8, state_color, 2, cv2.LINE_AA)
+        
+        return frame
+
 
     def trigger_alarm(self) -> None:
         """
         Trigger alarm (LEDs, buzzer, state change).
-
-        TODO:
-        - Set state to ALARM
-        - Turn on red LED (blinking)
-        - Activate buzzer (pulsing)
-        - Log alarm trigger
         """
-        # TODO: Implement alarm trigger
-        pass
+        try:
+            # Set state to ALARM
+            self.state = SystemState.ALARM
+            self.logger.warning("⚠️  ALARM TRIGGERED ⚠️")
+
+            # Turn on red LED (if available)
+            if self.led_controller:
+                self.led_controller.set_alarm()
+
+            # Activate buzzer (if available)
+            if self.buzzer:
+                self.buzzer.pulse()
+
+            self.logger.info("Alarm activated: LEDs and buzzer triggered")
+
+        except Exception as e:
+            self.logger.error(f"Error triggering alarm: {e}", exc_info=True)
 
     def clear_alarm(self) -> None:
         """
         Clear alarm state (return to armed).
-
-        TODO:
-        - Set state back to ARMED
-        - Stop red LED blinking (back to green)
-        - Stop buzzer
-        - Log alarm clear
         """
-        # TODO: Implement alarm clear
-        pass
+        try:
+            # Set state back to ARMED
+            self.state = SystemState.ARMED
+            self.logger.info("Alarm cleared, returning to armed state")
+
+            # Stop red LED, return to green
+            if self.led_controller:
+                self.led_controller.set_armed()
+
+            # Stop buzzer
+            if self.buzzer:
+                self.buzzer.stop()
+
+            self.logger.info("Alarm cleared: LEDs and buzzer deactivated")
+
+        except Exception as e:
+            self.logger.error(f"Error clearing alarm: {e}", exc_info=True)
 
     def stop(self) -> None:
         """
@@ -342,8 +648,47 @@ class SystemManager:
         6. Log final statistics
         7. Log shutdown complete
         """
-        # TODO: Implement system shutdown
-        pass
+
+  
+        if self.logger:
+            self.logger.info("Shutting down system...")
+
+        # Stop detection thread if running
+        if self.detection_thread and self.detection_thread.is_alive():
+            self.stop_event.set()
+            self.detection_thread.join(timeout=5)
+
+        # Stop Flask server
+        if self.flask_server:
+            self.logger.info("Stopping Flask server...")
+            self.flask_server.stop()
+
+        # Stop YOLO detector
+        if self.yolo_detector:
+            self.logger.info("Stopping YOLO detector...")
+            stats = self.yolo_detector.get_statistics()
+            self.logger.info(f"Detection statistics: {stats}")
+            
+        # Stop camera
+        if self.camera:
+            self.logger.info("Stopping camera...")
+            self.camera.stop()
+
+        # Turn off hardware (if available)
+        if self.led_controller:
+            self.led_controller.turn_off_all()
+        
+        if self.buzzer:
+            self.buzzer.stop()
+
+        if self.logger:
+            self.logger.info("✓ System shutdown complete")
+        
+        
+
+        
+
+
 
     def _signal_handler(self, signum, frame):
         """
@@ -359,15 +704,26 @@ class SystemManager:
         sys.exit(0)
 
     def get_statistics(self) -> dict:
-        """
-        Get system statistics.
-
-        TODO:
-        - Return dict with all statistics
-        - Include detection counts, rates, uptime, etc.
-        """
-        # TODO: Implement statistics retrieval
-        pass
+        """Get system statistics."""
+        stats = {
+            'total_detections': self.total_detections,
+            'person_detections': self.person_detections,
+            'animal_detections': self.animal_detections,
+            'uptime_seconds': self.get_uptime(),
+            'state': self.state.value
+        }
+        
+        # Add component statistics if available
+        if self.yolo_detector:
+            stats['yolo'] = self.yolo_detector.get_statistics()
+        if self.motion_detector:
+            stats['motion'] = self.motion_detector.get_statistics()
+        if self.alert_manager:
+            stats['alerts'] = self.alert_manager.get_statistics()
+        if self.video_streamer:
+            stats['streaming'] = self.video_streamer.get_statistics()
+        
+        return stats
 
     def __repr__(self) -> str:
         """String representation."""
@@ -381,4 +737,19 @@ class SystemManager:
 if __name__ == "__main__":
     """Test system manager."""
     print("System Manager test - TODO: Implement test code")
-    pass
+    print("Testing get_current_frame()...")
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from src.utils.logger import setup_logger, get_logger
+
+    setup_logger()
+
+    manager = SystemManager()
+    frame = manager.get_current_frame()
+    if frame is not None:
+        print("Frame retrieved successfully.")
+        cv2.imshow("Test Frame", frame)
+        cv2.waitKey(2000)  # Display for 2 seconds
+        cv2.destroyAllWindows()
+    else:
+        print("Failed to retrieve frame.")

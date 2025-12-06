@@ -37,42 +37,25 @@ def parse_arguments():
 
     Returns:
         argparse.Namespace: Parsed arguments
-
-    TODO:
-    - Create ArgumentParser
-    - Add arguments:
-        --arm (start armed)
-        --no-web (disable Flask)
-        --no-telegram (disable Telegram)
-        --debug (debug mode)
-        --config (custom config file)
-    - Parse and return arguments
     """
     parser = argparse.ArgumentParser(
         description='Smart Security System - AI-powered intrusion detection'
     )
 
-    # TODO: Add arguments
-    # parser.add_argument('--arm', action='store_true', help='Start system in armed state')
-    # parser.add_argument('--no-web', action='store_true', help='Disable web dashboard')
-    # parser.add_argument('--no-telegram', action='store_true', help='Disable Telegram bot')
-    # parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+    parser.add_argument('--arm', action='store_true',
+                       help='Start system in armed state')
+    parser.add_argument('--no-web', action='store_true',
+                       help='Disable web dashboard')
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable debug mode')
 
-    # TODO: Parse arguments
-    # args = parser.parse_args()
-    # return args
-
-    pass
+    args = parser.parse_args()
+    return args
 
 
 def print_banner():
     """
     Print application banner.
-
-    TODO:
-    - Print ASCII art logo
-    - Print version info
-    - Print configuration summary
     """
     print("=" * 60)
     print("    SMART SECURITY SYSTEM")
@@ -87,86 +70,46 @@ def print_banner():
     print()
 
 
-def validate_configuration():
-    """
-    Validate system configuration before starting.
-
-    Returns:
-        bool: True if configuration is valid
-
-    TODO:
-    - Check .env file exists
-    - Validate Telegram credentials
-    - Check camera availability
-    - Validate GPIO pins (on Raspberry Pi)
-    - Validate YOLO model path or availability
-    - Return True if all checks pass
-    - Print warnings for missing optional components
-    """
-    # TODO: Implement configuration validation
-    pass
-
-
 def main():
     """
     Main application entry point.
-
-    TODO:
-    1. Parse command line arguments
-    2. Print banner
-    3. Setup logger
-    4. Validate configuration
-    5. Create SystemManager instance
-    6. Initialize all components
-    7. If --arm flag, arm the system
-    8. Run main loop (keep alive)
-    9. Handle keyboard interrupt (Ctrl+C)
-    10. Cleanup and exit
     """
-
-    # TODO: Parse arguments
-    # args = parse_arguments()
+    # Parse arguments
+    args = parse_arguments()
 
     # Print banner
     print_banner()
 
-    # TODO: Setup logger
+    # Setup logger
     logger = setup_logger()
     logger.info("Starting Smart Security System...")
 
-    # TODO: Validate configuration
-    # if not validate_configuration():
-    #     logger.error("Configuration validation failed!")
-    #     sys.exit(1)
-
-    # TODO: Create and initialize system
+    # Create and initialize system
     system = None
     try:
         logger.info("Initializing system components...")
-        # system = SystemManager()
-        #
-        # if not system.initialize():
-        #     logger.error("System initialization failed!")
-        #     sys.exit(1)
-        #
-        # logger.info("System initialized successfully!")
-        #
-        # # Auto-arm if flag set
-        # if args.arm:
-        #     logger.info("Auto-arming system...")
-        #     system.arm()
-        #
-        # # Main loop - keep application running
-        # logger.info("System ready. Press Ctrl+C to stop.")
-        # while True:
-        #     time.sleep(1)
+        system = SystemManager()
 
-        # TODO: Implement initialization and main loop
-        print("TODO: Implement system initialization")
-        print("System will run here continuously until Ctrl+C")
+        if not system.initialize():
+            logger.error("System initialization failed!")
+            sys.exit(1)
+
+        logger.info("✓ System initialized successfully!")
+
+        # Auto-arm if flag set
+        if args.arm:
+            logger.info("Auto-arming system...")
+            system.arm()
+
+        # Main loop - keep application running
+        logger.info("System ready. Press Ctrl+C to stop.")
+        logger.info(f"Web dashboard: http://0.0.0.0:{settings.flask_port}")
+
+        while True:
+            time.sleep(1)
 
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
+        logger.info("\nKeyboard interrupt received")
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
     finally:
@@ -177,35 +120,5 @@ def main():
         logger.info("Goodbye!")
 
 
-def run_tests():
-    """
-    Run system tests (optional test mode).
-
-    TODO:
-    - Test camera
-    - Test GPIO components
-    - Test motion detection
-    - Test YOLO detection
-    - Test Telegram bot
-    - Print test results
-    """
-    # TODO: Implement test mode
-    pass
-
-
 if __name__ == "__main__":
-    """
-    Entry point when running as script.
-
-    Handles special modes:
-    - Normal operation: python3 main.py
-    - Test mode: python3 main.py --test
-    - Help: python3 main.py --help
-    """
-
-    # Check for special commands
-    if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        print("Running system tests...")
-        run_tests()
-    else:
-        main()
+    main()

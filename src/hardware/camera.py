@@ -58,14 +58,6 @@ class Camera:
             width: Frame width in pixels (default from settings)
             height: Frame height in pixels (default from settings)
             fps: Target FPS (default from settings)
-
-        TODO:
-        - Load camera settings from config if not provided
-        - Initialize cv2.VideoCapture with camera_index
-        - Set camera properties (width, height, FPS)
-        - Initialize threading components (thread, lock, event)
-        - Initialize frame queue (maxsize=2 to keep only latest frames)
-        - Set stopped flag to False
         """
         # Camera settings
         self.camera_index = camera_index or settings.camera_index
@@ -90,47 +82,130 @@ class Camera:
 
     def start(self) -> bool:
         """
-        Start camera capture thread.
-
-        Returns:
-            bool: True if started successfully, False otherwise
-
-        TODO:
-        - Initialize cv2.VideoCapture(self.camera_index)
-        - Check if camera opened successfully (capture.isOpened())
-        - Set camera properties:
-            - cv2.CAP_PROP_FRAME_WIDTH
-            - cv2.CAP_PROP_FRAME_HEIGHT
-            - cv2.CAP_PROP_FPS
-        - Create and start capture thread (target=self._capture_loop)
-        - Set daemon=True so thread stops when main program exits
-        - Wait a moment for first frame to be captured
-        - Return True if successful, False if camera failed to open
+        Start camera capture thread with auto-detection. / NEW
         """
-        # TODO: Implement camera initialization and thread start
-        pass
+        # Try configured index first
+        if self._try_camera(self.camera_index):
+            print(f"Camera started at configuration index {self.camera_index} (from config)...")
+            return self._finalize_start()
+        
+        # Auto-detect camera index
+        print("Configured camera index failed. Starting auto-detection...")
+        for index in range(5):
+            if index == self.camera_index:
+                continue
+
+            # Auto-detection fallback
+            print(f"Trying camera index {index}... ")
+            if self._try_camera(index):
+                print(f"✓ Found camera at index {index}")
+                self.camera_index = index
+                return self._finalize_start()
+            
+        print("No camera found")
+        return False
+
+    def _try_camera(self, index: int) -> bool:
+        """
+        Try to open camera at specific index.
+        """
+        try:
+            # Test if camera can be opened
+            test_cap = cv2.VideoCapture(index)
+            if not test_cap.isOpened():
+                test_cap.release()
+                
+                return False
+            
+            # Try to read a test frame
+            ret, _ = test_cap.read()
+            test_cap.release()
+
+            if not ret:
+                return False
+            
+            # Success - now open for real use
+            self.capture = cv2.VideoCapture(index)
+            return self.capture.isOpened()
+            
+        except Exception as e:
+            print(f"Error trying camera {index}: {e}")
+            return False
+    
+    def _finalize_start(self) -> bool:
+        """
+        Finalize camera start - set properties and start thread.
+        Called after camera is successfully opened.
+        """
+        # Set camera properties
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self.capture.set(cv2.CAP_PROP_FPS, self.fps)
+
+        # Get actual resolution
+        actual_width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        print(f"✓ Camera resolution: {actual_width}x{actual_height}")
+
+        # Start capture thread
+        self.stopped = False
+        self.start_time = time.time()
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()  # IMPORTANT!
+
+        # Wait for first frame
+        time.sleep(0.5)
+        
+        # Verify frames are being captured
+        if not self.frame_queue.empty():
+            print(f"✓ Capturing frames ({self.frame_count} in queue)")
+        else:
+            print("⚠ Warning: No frames captured yet")
+
+        print(f"✓ Camera started successfully")
+        return True
 
     def _capture_loop(self) -> None:
         """
         Main capture loop (runs in separate thread).
-
         Continuously reads frames from camera and puts them in queue.
         Discards old frames if queue is full (keep only latest).
-
-        TODO:
-        - Loop while not self.stopped
-        - Read frame from self.capture.read()
-        - If frame read successfully:
-            - Try to put frame in queue (non-blocking)
-            - If queue full, remove old frame first
-            - Increment frame_count
-        - If frame read failed:
-            - Log error
-            - Sleep briefly and retry
-        - Handle exceptions gracefully
         """
-        # TODO: Implement capture loop
-        pass
+        while not self.stopped:
+            try:
+                # Read frame from camera
+                ret, frame = self.capture.read()
+                
+                if ret and frame is not None:
+                    # Try to put frame in queue (non-blocking)
+                    try:
+                        # If queue is full, remove old frame first
+                        if self.frame_queue.full():
+                            try:
+                                self.frame_queue.get_nowait()
+                            except Empty:
+                                pass
+                        
+                        # Put new frame in queue
+                        self.frame_queue.put(frame, block=False)
+                        self.frame_count += 1
+                        
+                    except Exception as e:
+                        # Queue operations failed, continue
+                        pass
+                else:
+                    # Frame read failed
+                    print(f"Warning: Failed to read frame from camera")
+                    time.sleep(0.1)  # Wait before retry
+                    
+            except Exception as e:
+                print(f"Error in capture loop: {e}")
+                time.sleep(0.1)
+
+        print("Capture loop stopped")
+
+
+
 
     def get_frame(self, timeout: float = 1.0) -> Optional[np.ndarray]:
         """
@@ -138,18 +213,14 @@ class Camera:
 
         Args:
             timeout: Maximum time to wait for frame (seconds)
-
-        Returns:
-            numpy.ndarray: Latest frame, or None if no frame available
-
-        TODO:
-        - Try to get frame from queue (with timeout)
-        - If queue empty, return None
-        - Return frame as numpy array
-        - Handle Empty exception from queue
         """
-        # TODO: Implement thread-safe frame retrieval
-        pass
+        try:
+            # Try to get frame from queue with timeout
+            frame = self.frame_queue.get(timeout=timeout)
+            return frame
+        except Empty:
+            # No frame available
+            return None
 
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         """
@@ -157,43 +228,65 @@ class Camera:
 
         Returns:
             Tuple[bool, Optional[np.ndarray]]: (success, frame)
-
-        TODO:
-        - Call get_frame()
-        - Return (True, frame) if frame exists
-        - Return (False, None) if no frame
         """
-        # TODO: Implement OpenCV-compatible read method
-        pass
+        frame = self.get_frame()
+        if frame is not None:
+            return(True, frame)
+        else:
+            return(False, None)
+
+    
 
     def stop(self) -> None:
         """
         Stop camera capture and cleanup resources.
-
-        TODO:
-        - Set self.stopped = True to signal thread to stop
-        - Wait for capture thread to finish (thread.join with timeout)
-        - Release camera (capture.release())
-        - Clear frame queue
-        - Log final statistics (total frames captured, average FPS)
         """
-        # TODO: Implement graceful shutdown
-        pass
+        if self.stopped:
+            print(f"Camera already stopped")
+            return
+        # Singal thread to stop
+        self.stopped = True
+
+        # Wait for thread to finish (with timeout)
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        
+        # Release camera
+        if self.capture:
+            self.capture.release()
+            self.capture = None
+
+        # Clear from queue
+        while not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except Empty:
+                break
+
+        # Log statistics
+        if self.start_time:
+            elapsed = time.time() - self.start_time
+            avg_fps = self.frame_count / elapsed if elapsed > 0 else 0
+            print(f"✓ Camera stopped. Captured {self.frame_count} frames in {elapsed:.1f}s ({avg_fps:.1f} FPS)")
+        else:
+            print("✓ Camera stopped")
 
     def is_opened(self) -> bool:
         """
         Check if camera is opened and capturing.
-
         Returns:
             bool: True if camera is active, False otherwise
-
-        TODO:
-        - Check if capture object exists and is opened
-        - Check if thread is alive
-        - Return True only if both conditions met
         """
-        # TODO: Implement status check
-        pass
+        if self.capture is None:
+            return False
+            
+        if not self.capture.isOpened():
+            return False
+        
+        if self.thread is None or not self.thread.is_alive():
+            return False
+        
+        return not self.stopped
 
     def get_fps(self) -> float:
         """
@@ -201,26 +294,20 @@ class Camera:
 
         Returns:
             float: Frames per second
-
-        TODO:
-        - Calculate elapsed time since start
-        - Divide frame_count by elapsed time
-        - Return calculated FPS
-        - Handle edge cases (no frames captured yet)
         """
-        # TODO: Implement FPS calculation
-        pass
+        if self.start_time is None or self.frame_count == 0:
+            return 0.0
+        
+        elapsed = time.time() - self.start_time
+        
+        if elapsed == 0:
+            return 0.0
+        
+        return self.frame_count / elapsed
 
     def get_resolution(self) -> Tuple[int, int]:
         """
         Get current camera resolution.
-
-        Returns:
-            Tuple[int, int]: (width, height)
-
-        TODO:
-        - Get actual resolution from capture object
-        - Return (width, height) tuple
         """
         return (self.width, self.height)
 
@@ -243,13 +330,79 @@ class Camera:
 if __name__ == "__main__":
     """
     Test camera functionality.
-
-    TODO:
-    - Initialize camera
-    - Capture frames for 10 seconds
-    - Display frames with cv2.imshow()
-    - Print FPS statistics
-    - Test graceful shutdown
     """
-    print("Camera test - TODO: Implement test code")
-    pass
+    print("=" * 60)
+    print("Camera test module")
+    print("=" * 60)
+
+    # Test 1: Initialize camera
+    print("\n[Test 1] Initializing camera...")
+    camera = Camera()
+    
+    # Test 2: Start camera
+    print("\n[Test 2] Starting camera...")
+    if not camera.start():
+        print("❌ Failed to start camera!")
+        exit(1)
+    
+    print(f"✓ Camera started: {camera}")
+    
+    # Test 3: Capture frames for 10 seconds
+    print("\n[Test 3] Capturing frames for 10 seconds...")
+    print("Press 'q' to quit early, or wait 10 seconds")
+    
+    start_time = time.time()
+    frame_display_count = 0
+
+    try:
+        while(time.time() - start_time) < 10:
+            # Get frame
+            frame = camera.get_frame(timeout=1.0)
+            if frame is not None:
+                # Add fps overlay
+                fps = camera.get_fps()
+                cv2.putText(
+                    frame,
+                    f"FPS: {fps:.1f}",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 255, 0),
+                    2
+                )
+                # Display frame
+                cv2.imshow("Camera Test", frame)
+                frame_display_count += 1
+
+                # Check for 'q' key to quit
+                if cv2.waitKey(1) &  0xFF == ord('q'):
+                    print("\n→ User pressed 'q', exiting early...")
+                    break
+            else:
+                print("⚠ Warning: No frame received")
+                time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        print("\n→ Keyboard interrupt received")
+    
+    finally:
+        # Close display window
+        cv2.destroyAllWindows()
+
+    # Test 4: Print statistics
+    print(f"\n[Test 4] Statistics:")
+    print(f"  - Frames displayed: {frame_display_count}")
+    print(f"  - Total frames captured: {camera.frame_count}")
+    print(f"  - Average FPS: {camera.get_fps():.1f}")
+    print(f"  - Resolution: {camera.get_resolution()}")
+    print(f"  - Camera index: {camera.camera_index}")
+    
+    # Test 5: Stop camera
+    print(f"\n[Test 5] Stopping camera...")
+    camera.stop()
+    
+    print("\n" + "=" * 60)
+    print("✓ ALL TESTS PASSED")
+    print("=" * 60)
+
+
