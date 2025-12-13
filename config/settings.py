@@ -33,6 +33,7 @@ class Settings:
         self._load_camera_settings()
         self._load_flask_settings()
         self._load_yolo_settings()
+        self._load_detector_settings()
         self._load_motion_settings()
         self._load_logging_settings()
         self._load_system_settings()
@@ -62,6 +63,12 @@ class Settings:
         self.yolo_confidence: float = float(os.getenv("YOLO_CONFIDENCE", "0.6"))
         self.yolo_iou_threshold: float = float(os.getenv("YOLO_IOU_THRESHOLD", "0.45"))
         self.yolo_img_size: int = int(os.getenv("YOLO_IMG_SIZE", "416"))
+
+    def _load_detector_settings(self) -> None:
+        """Load detector configuration."""
+        self.detector_type: str = os.getenv("DETECTOR_TYPE", "yolo")
+        self.face_recognition_tolerance: float = float(os.getenv("FACE_TOLERANCE", "0.6"))
+        self.known_faces_db: str = os.getenv("KNOWN_FACES_DB", "data/known_faces/database.pkl")
 
     def _load_motion_settings(self) -> None:
         """Load motion detection configuration."""

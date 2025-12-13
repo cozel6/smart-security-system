@@ -41,7 +41,7 @@ from pathlib import Path
 import threading
 import time
 from enum import Enum
-from typing import Optional
+from typing import Optional, Dict
 from datetime import datetime
 import signal
 import sys
@@ -102,6 +102,7 @@ class SystemManager:
         # Detection components
         self.motion_detector = None
         self.yolo_detector = None
+        self.face_detector = None  # For two-stage detection
 
         # Alert components
         self.telegram_bot = None
@@ -130,6 +131,10 @@ class SystemManager:
         self.animal_detections = 0
         self._last_fps = 0.0  # Track actual FPS
 
+        # Face recognition queue for async processing
+        self.face_recognition_results = {}  # {frame_id: result}
+        self.face_recognition_lock = threading.Lock()
+
     def initialize(self) -> bool:
         """
         Initialize all system components.
@@ -149,17 +154,30 @@ class SystemManager:
                 return False
             self.logger.info(f"Camera initialized: {self.camera}")
 
-            # 3. Initialize YOLO detector
-            self.logger.info("Initializing YOLO detector...")
+            # 3. Initialize Detectors (YOLO + Face Recognition for two-stage detection)
+            self.logger.info("Initializing two-stage detection (YOLO + Face Recognition)...")
+
+            # Load YOLO detector (stage 1: detect persons)
             from src.detection.yolo_detector import YOLODetector
             self.yolo_detector = YOLODetector()
-
             if not self.yolo_detector.load_model():
-                self.logger.error("Failed to load yolo model")
-                # Continue anyway - detection will be disabled
-            else:
-                self.logger.info(f"YOLO detector initialized: {self.yolo_detector}")
+                self.logger.error("Failed to load YOLO model")
+            else:            
+                self.logger.info(f"✓ YOLO detector loaded: {self.yolo_detector}")
             
+            # Load Face Recognition detector (stage 2: identify authorized persons)
+            try:
+                from src.detection.face_recognition_detector import FaceRecognitionDetector
+                self.face_detector = FaceRecognitionDetector()
+                if self.face_detector.load_model():
+                    self.logger.info(f"✓ Face Recognition detector loaded: {self.face_detector}")
+                else:
+                    self.logger.warning("Face Recognition detector failed to load (no authorized persons?)")
+                    self.face_detector = None
+            except Exception as e:
+                self.logger.warning(f"Face Recognition detector not available: {e}")
+                self.face_detector = None
+
             # 4. Initialize Flask server with callbacks
             self.logger.info("Initializing Flask server...")
             self.flask_server = FlaskServer()
@@ -314,19 +332,85 @@ class SystemManager:
                 # Reset empty frame counter 
                 consecutive_empty_frames = 0
 
-                # 3. YOLO Detection
+                # 3. Two-Stage Detection: YOLO (stage 1) → Face Recognition (stage 2)
                 if self.yolo_detector and self.yolo_detector.model_loaded:
-                    detection_result = self.yolo_detector.detect(frame, draw=True)
-
-                    # Update latest annotated frame for streaming
-                    # Use annotated frame if available, otherwise use original frame
-                    annotated = detection_result.get('frame')
-                    with self.frame_lock:
-                        self.latest_annotated_frame = annotated if annotated is not None else frame
+                    # Run YOLO detection first (without drawing if person might be detected)
+                    detection_result = self.yolo_detector.detect(frame, draw=False)
 
                     # 4. Process detection results
                     if detection_result['type'] != DetectionType.NONE:
+                        # STAGE 2: If person detected, check if authorized (Face Recognition)
+                        if detection_result['person_count'] > 0 and self.face_detector:
+                            self.logger.info("Person detected by YOLO, running Face Recognition in background...")
+
+                            # Run face recognition in BACKGROUND THREAD (non-blocking)
+                            frame_copy = frame.copy()
+                            frame_id = time.time()
+
+                            def run_face_recognition_async():
+                                try:
+                                    # Enable drawing to show names and bounding boxes on frame
+                                    face_result = self.face_detector.detect(frame_copy, draw=True)
+
+                                    # Store result with frame_id
+                                    with self.face_recognition_lock:
+                                        self.face_recognition_results[frame_id] = face_result
+
+                                        # Keep only last 5 results (prevent memory leak)
+                                        if len(self.face_recognition_results) > 5:
+                                            oldest_key = min(self.face_recognition_results.keys())
+                                            del self.face_recognition_results[oldest_key]
+
+                                except Exception as e:
+                                    self.logger.error(f"Face recognition error: {e}")
+
+                            # Start background thread with 3-second timeout
+                            face_thread = threading.Thread(target=run_face_recognition_async, daemon=True)
+                            face_thread.start()
+
+                            # Wait maximum 3 seconds for face recognition result
+                            face_thread.join(timeout=3.0)
+
+                            # Check if result available
+                            with self.face_recognition_lock:
+                                face_result = self.face_recognition_results.get(frame_id)
+
+                            if face_result:
+                                # Update annotated frame with face recognition results (always show names)
+                                face_annotated = face_result.get('frame')
+                                if face_annotated is not None:
+                                    with self.frame_lock:
+                                        self.latest_annotated_frame = face_annotated
+
+                                # Check if authorized person detected
+                                if face_result.get('authorized_person_detected', False):
+                                    authorized_names = face_result.get('authorized_names', [])
+                                    self.logger.info(f"✓ Authorized person detected: {authorized_names} - NO ALERT")
+
+                                    # Skip alert for authorized persons
+                                    continue
+                                else:
+                                    self.logger.warning("⚠ Unknown person detected - TRIGGERING ALERT")
+                            else:
+                                # Face recognition timeout - draw YOLO results manually
+                                self.logger.warning("Face recognition timeout or failed - using YOLO detection")
+                                yolo_annotated = self._draw_yolo_detections(frame.copy(), detection_result)
+                                with self.frame_lock:
+                                    self.latest_annotated_frame = yolo_annotated
+
+                        # Process detection (triggers alert if not authorized)
                         self._process_detection(frame, detection_result)
+                    else:
+                        # No person detected, but maybe animals - draw YOLO results
+                        if detection_result['animal_count'] > 0:
+                            yolo_annotated = self._draw_yolo_detections(frame.copy(), detection_result)
+                            with self.frame_lock:
+                                self.latest_annotated_frame = yolo_annotated
+                        else:
+                            # No detections at all - show clean frame
+                            with self.frame_lock:
+                                self.latest_annotated_frame = frame
+
                 # 5. Control loop rate
                 elapsed = time.time() - loop_start_time
                 sleep_time = frame_interval - elapsed
@@ -383,6 +467,9 @@ class SystemManager:
             person_count = detection_result['person_count']
             animal_count = detection_result['animal_count']
 
+            # Initialize snapshot_path for alert manager usage
+            snapshot_path = None
+
             # Log detection
             self.logger.info(
                 f"Detection: {detection_type.value} - "
@@ -403,27 +490,32 @@ class SystemManager:
                 # Trigger alarm
                 self.trigger_alarm()
 
-                # Save snapshot (with cooldown)
+                # Save snapshot (with cooldown) in BACKGROUND THREAD
                 current_time = time.time()
                 if current_time - self.last_person_snapshot_time >= self.snapshot_cooldown:
-                    try:
-                        from pathlib import Path
-                        from datetime import datetime
+                    frame_copy = frame.copy()  # Prevent race conditions
+                    self.last_person_snapshot_time = current_time  # Update BEFORE thread starts
+                    
+                    def save_snapshot_async():
+                        nonlocal snapshot_path
+                        try:
+                            from pathlib import Path
+                            from datetime import datetime
 
-                        Path("snapshots").mkdir(parents=True, exist_ok=True)
+                            Path("snapshots").mkdir(parents=True, exist_ok=True)
 
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-                        filename = f"snapshot_{timestamp}.jpg"
-                        snapshot_path = f"snapshots/{filename}"
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                            filename = f"snapshot_{timestamp}.jpg"
+                            snapshot_path = f"snapshots/{filename}"
 
-                        cv2.imwrite(snapshot_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                        self.logger.info(f"Snapshot saved: {snapshot_path}")
+                            cv2.imwrite(snapshot_path, frame_copy, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                            self.logger.info(f"Snapshot saved: {snapshot_path}")
 
-                        # Update last snapshot time
-                        self.last_person_snapshot_time = current_time
-
-                    except Exception as e:
-                        self.logger.error(f"Failed to save snapshot: {e}")
+                        except Exception as e:
+                            self.logger.error(f"Failed to save snapshot: {e}")
+                    
+                    # Run in background thread
+                    threading.Thread(target=save_snapshot_async, daemon=True).start()
                 else:
                     # Skip snapshot due to cooldown
                     remaining = self.snapshot_cooldown - (current_time - self.last_person_snapshot_time)
@@ -450,37 +542,100 @@ class SystemManager:
             elif detection_type == DetectionType.ANIMAL:
                 self.logger.info(f"Animal detected: {animal_count}")
 
-                # Save snapshot with cooldown (animals have longer cooldown)
+                # Save snapshot with cooldown (animals have longer cooldown) in BACKGROUND THREAD
                 current_time = time.time()
                 animal_cooldown = self.snapshot_cooldown * 3  # 30 seconds for animals
                 if current_time - self.last_animal_snapshot_time >= animal_cooldown:
-                    try:
-                        from pathlib import Path
-                        from datetime import datetime
+                    frame_copy = frame.copy()  # Prevent race conditions
+                    self.last_animal_snapshot_time = current_time  # Update BEFORE thread starts
+                    
+                    def save_animal_snapshot_async():
+                        nonlocal snapshot_path
+                        try:
+                            from pathlib import Path
+                            from datetime import datetime
 
-                        Path("snapshots").mkdir(parents=True, exist_ok=True)
+                            Path("snapshots").mkdir(parents=True, exist_ok=True)
 
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-                        filename = f"snapshot_animal_{timestamp}.jpg"
-                        snapshot_path = f"snapshots/{filename}"
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                            filename = f"snapshot_animal_{timestamp}.jpg"
+                            snapshot_path = f"snapshots/{filename}"
 
-                        cv2.imwrite(snapshot_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                        self.logger.info(f"Animal snapshot saved: {snapshot_path}")
+                            cv2.imwrite(snapshot_path, frame_copy, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                            self.logger.info(f"Animal snapshot saved: {snapshot_path}")
 
-                        # Update last snapshot time
-                        self.last_animal_snapshot_time = current_time
-
-                    except Exception as e:
-                        self.logger.error(f"Failed to save snapshot: {e}")
+                        except Exception as e:
+                            self.logger.error(f"Failed to save snapshot: {e}")
+                    
+                    # Run in background thread
+                    threading.Thread(target=save_animal_snapshot_async, daemon=True).start()
                 else:
                     remaining = animal_cooldown - (current_time - self.last_animal_snapshot_time)
                     self.logger.debug(f"Animal snapshot skipped (cooldown: {remaining:.1f}s remaining)")
-
         except Exception as e:
             self.logger.error(f"Error processing detection: {e}", exc_info=True)
 
+    def _draw_yolo_detections(self, frame: np.ndarray, detection_result: Dict) -> np.ndarray:
+        """
+        Draw YOLO detection boxes on frame.
+        Helper function to avoid running YOLO detection twice.
+        """
+        detections = detection_result.get('detections', [])
 
+        for det in detections:
+            # Extract bbox
+            bbox = det['bbox']
+            x1, y1, x2, y2 = map(int, bbox)
 
+            # Get class info
+            class_name = det['class_name']
+            confidence = det['confidence']
+
+            # Choose color (red for person, yellow for animal)
+            if class_name.lower() == 'person':
+                color = (0, 0, 255)  # Red (BGR)
+                thickness = 3
+            else:
+                color = (0, 255, 255)  # Yellow for animals (BGR)
+                thickness = 2
+
+            # Draw rectangle
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+
+            # Prepare label
+            label = f"{class_name} ({confidence:.2f})"
+
+            # Get text size for background
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            font_thickness = 2
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label, font, font_scale, font_thickness
+            )
+
+            # Draw label background
+            label_y = y1 - 10 if y1 - 10 > text_height else y1 + text_height + 10
+            cv2.rectangle(
+                frame,
+                (x1, label_y - text_height - baseline),
+                (x1 + text_width, label_y + baseline),
+                color,
+                -1  # Filled
+            )
+
+            # Draw label text
+            cv2.putText(
+                frame,
+                label,
+                (x1, label_y),
+                font,
+                font_scale,
+                (255, 255, 255),  # White text
+                font_thickness,
+                cv2.LINE_AA
+            )
+
+        return frame
 
     def get_status(self) -> dict:
         """Get current system status with proper format for dashboard."""
@@ -668,6 +823,10 @@ class SystemManager:
             self.logger.info("Stopping YOLO detector...")
             stats = self.yolo_detector.get_statistics()
             self.logger.info(f"Detection statistics: {stats}")
+
+        # Stop Face Recognition detector
+        if self.face_detector:
+            self.logger.info("Stopping Face Recognition detector...")
             
         # Stop camera
         if self.camera:
