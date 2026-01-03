@@ -127,8 +127,11 @@ def extract_encodings(frames):
     for i, frame in enumerate(frames):
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Detect faces
-        face_locations = face_recognition.face_locations(rgb_frame)
+        # IMPORTANT: Use 50% downsampling to match system detection
+        small_frame = cv2.resize(rgb_frame, (0, 0), fx=0.5, fy=0.5)
+
+        # Detect faces on downsampled frame
+        face_locations = face_recognition.face_locations(small_frame)
 
         if len(face_locations) == 0:
             print(f"  ⚠️  Photo {i+1}: No face detected, skipping")
@@ -137,8 +140,8 @@ def extract_encodings(frames):
         if len(face_locations) > 1:
             print(f"  ⚠️  Photo {i+1}: Multiple faces detected, using first one")
 
-        # Extract encoding
-        face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+        # Extract encoding from SAME downsampled frame (critical!)
+        face_encodings = face_recognition.face_encodings(small_frame, face_locations)
 
         if len(face_encodings) > 0:
             encodings.append(face_encodings[0])

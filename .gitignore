@@ -84,3 +84,4 @@ htmlcov/
 .dmypy.json
 dmypy.json
 data/known_faces/database.pkl
+data/known_faces/database.pkl.backup

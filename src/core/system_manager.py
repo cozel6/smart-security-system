@@ -50,7 +50,7 @@ import numpy as np
 import cv2
 
 #from src.hardware import PIRSensor, LEDController, Buzzer
-#from src.alerts import TelegramBot, AlertManager
+from src.alerts import TelegramBot, AlertManager
 from src.detection import  YOLODetector, DetectionType, AlertLevel # , MotionDetector
 from src.streaming import FlaskServer, VideoStreamer
 from src.utils.logger import setup_logger, get_logger
@@ -114,6 +114,7 @@ class SystemManager:
 
         # Threading
         self.detection_thread = None
+        self.telegram_thread = None
         self.stop_event = threading.Event()
 
         # Latest annotated frame for streaming
@@ -134,6 +135,10 @@ class SystemManager:
         # Face recognition queue for async processing
         self.face_recognition_results = {}  # {frame_id: result}
         self.face_recognition_lock = threading.Lock()
+
+        # Alert components
+        self.alert_manager = None
+        self.telegram_bot = None
 
     def initialize(self) -> bool:
         """
@@ -181,9 +186,17 @@ class SystemManager:
             # 4. Initialize Flask server with callbacks
             self.logger.info("Initializing Flask server...")
             self.flask_server = FlaskServer()
-            
 
-            # 5. Start Flask server
+            # 5. Initialize Telegram bot
+            self.telegram_bot = TelegramBot()
+            self.telegram_bot.register_callbacks(
+                on_arm=self.arm,
+                on_disarm=self.disarm,
+                get_status=self.get_status,
+                get_snapshot=self.get_snapshot
+                )
+
+            # 6. Start Flask server
             self.logger.info("Registering Flask callbacks...")
             self.flask_server.register_callbacks(
                 get_frame=self.get_current_frame,
@@ -192,9 +205,23 @@ class SystemManager:
                 disarm=self.disarm,
             )
             self.flask_server.start()
+
+            # 7. Start Telegram bot in separate thread
+            self.logger.info("Starting Telegram bot thread...")
+            self.telegram_thread = threading.Thread(
+                target=self.telegram_bot.start,
+                daemon=True,
+                name="TelegramBot"
+            )
+            self.telegram_thread.start()
+            self.logger.info("✓ Telegram bot started")
+
             self.start_time = time.time()
             self._is_armed = False
             return True
+        
+        
+        
         
         except Exception as e:
             if self.logger:
@@ -701,6 +728,16 @@ class SystemManager:
 
         # Fallback to dummy frame if camera unavailable
         return self._generate_dummy_frame()
+
+    def get_snapshot(self) -> np.ndarray:
+        """
+        Get current camera snapshot for Telegram bot.
+        Returns the current frame (with detections if armed).
+
+        Returns:
+            np.ndarray: Current camera frame
+        """
+        return self.get_current_frame()
         
 
     def _generate_dummy_frame(self) -> np.ndarray:
