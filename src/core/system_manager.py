@@ -49,14 +49,13 @@ import psutil
 import numpy as np
 import cv2
 
-#from src.hardware import PIRSensor, LEDController, Buzzer
-#from src.alerts import TelegramBot, AlertManager
 from src.detection import  YOLODetector, DetectionType, AlertLevel # , MotionDetector
 from src.streaming import FlaskServer, VideoStreamer
 from src.utils.logger import setup_logger, get_logger
 from src.utils import helpers
 from config.settings import settings
-from src.hardware import Camera 
+from src.hardware import Camera, PIRSensor, LEDController, Buzzer, RPI_HARDWARE_AVAILABLE
+#from src.alerts import TelegramBot, AlertManager 
 
 
 class SystemState(Enum):
@@ -135,6 +134,10 @@ class SystemManager:
         self.face_recognition_results = {}  # {frame_id: result}
         self.face_recognition_lock = threading.Lock()
 
+        # PIR auto-arm monitoring
+        self.pir_monitor_thread = None
+        self.pir_monitor_stop_event = threading.Event()
+
     def initialize(self) -> bool:
         """
         Initialize all system components.
@@ -146,7 +149,43 @@ class SystemManager:
             self.logger.info("Initializing Smart Security System...")
             self.logger.info("=" * 60)
 
-            # 2. Initialization camera
+            # 2. Initialize Hardware (LEDs, Buzzer, PIR) - Raspberry Pi only
+            if settings.use_hardware and RPI_HARDWARE_AVAILABLE:
+                self.logger.info("Initializing GPIO hardware...")
+
+                # Initialize LED Controller
+                try:
+                    self.led_controller = LEDController()
+                    self.led_controller.start()
+                    self.logger.info("✓ LED Controller initialized")
+                except Exception as e:
+                    self.logger.warning(f"LED Controller initialization failed: {e}")
+                    self.led_controller = None
+
+                # Initialize Buzzer
+                try:
+                    self.buzzer = Buzzer()
+                    self.buzzer.start()
+                    self.logger.info("✓ Buzzer initialized")
+                except Exception as e:
+                    self.logger.warning(f"Buzzer initialization failed: {e}")
+                    self.buzzer = None
+
+                # Initialize PIR Sensor with callback
+                try:
+                    self.pir_sensor = PIRSensor()
+                    self.pir_sensor.start(callback=self._handle_pir_trigger)
+                    self.logger.info("✓ PIR Sensor initialized")
+                except Exception as e:
+                    self.logger.warning(f"PIR Sensor initialization failed: {e}")
+                    self.pir_sensor = None
+            else:
+                if not RPI_HARDWARE_AVAILABLE:
+                    self.logger.info("GPIO hardware not available (not running on Raspberry Pi)")
+                else:
+                    self.logger.info("GPIO hardware disabled in settings")
+
+            # 3. Initialization camera
             self.logger.info("Initializing camera...")
             self.camera = Camera()
             if not self.camera.start():
@@ -224,6 +263,7 @@ class SystemManager:
             # 3. Turn on green LED (armed indicator) - if available
             if self.led_controller:
                 self.led_controller.set_armed()
+                self.logger.info("✓ Green LED turned ON (system armed)")
             
             # 4. Start PIR sensor monitoring - Pentru Raspberry Pi
             if self.pir_sensor:
@@ -274,7 +314,8 @@ class SystemManager:
             
             # 3. Turn off LEDs (if available)
             if self.led_controller:
-                self.led_controller.turn_off_all()
+                self.led_controller.set_disarmed()
+                self.logger.info("✓ All LEDs turned OFF (system disarmed)")
             
             # 4. Stop buzzer (if available)
             if self.buzzer:
@@ -441,17 +482,107 @@ class SystemManager:
         """
         Handle PIR sensor trigger (callback).
 
+        Behavior:
+        - If PIR auto-arm is enabled:
+            - Motion detected → ARM system (start camera)
+            - Start monitoring thread for no-motion timeout
+            - If no motion for X minutes → DISARM system (stop camera)
+        - If system is already ARMED:
+            - Brief buzzer beep as feedback (optional)
+
         Args:
             channel: GPIO pin that triggered
-
-        TODO:
-        - Log PIR trigger
-        - If system is ARMED:
-            - Set flag to start motion detection
-            - Optional: Brief buzzer beep as feedback
         """
-        # TODO: Implement PIR callback
-        pass
+        try:
+            self.logger.info(f"🔴 PIR MOTION DETECTED (Pin {channel})")
+
+            # If PIR auto-arm is enabled
+            if settings.pir_auto_arm_enabled:
+                # Auto-arm system when motion detected
+                if self.state == SystemState.DISARMED:
+                    self.logger.info("PIR auto-arm: Arming system due to motion...")
+
+                    # Beep to indicate arming
+                    if self.buzzer:
+                        self.buzzer.beep(duration=0.1)
+
+                    # Arm the system
+                    self.arm()
+
+                    # Start PIR monitoring thread (auto-disarm after timeout)
+                    self._start_pir_monitor()
+                else:
+                    self.logger.info("PIR motion detected - system already armed")
+
+                    # Reset PIR monitor timeout (motion detected, extend armed time)
+                    self._start_pir_monitor()
+            else:
+                # PIR auto-arm disabled, just log
+                self.logger.info("PIR auto-arm disabled - ignoring motion")
+
+                # Optional: Beep if system is armed
+                if self.state == SystemState.ARMED and self.buzzer:
+                    self.buzzer.beep(duration=0.05)
+
+        except Exception as e:
+            self.logger.error(f"Error in PIR callback: {e}", exc_info=True)
+
+    def _start_pir_monitor(self) -> None:
+        """
+        Start or restart PIR monitoring thread for auto-disarm.
+
+        Monitors for no-motion timeout. If no motion detected for
+        configured time, automatically disarms the system.
+        """
+        # Stop existing monitor thread if running
+        if self.pir_monitor_thread and self.pir_monitor_thread.is_alive():
+            # Just restart - signal will be cleared in loop
+            self.pir_monitor_stop_event.set()
+            self.pir_monitor_thread.join(timeout=1.0)
+
+        # Start new monitor thread
+        self.pir_monitor_stop_event.clear()
+        self.pir_monitor_thread = threading.Thread(
+            target=self._pir_monitor_loop,
+            daemon=True,
+            name="PIRMonitorThread"
+        )
+        self.pir_monitor_thread.start()
+        self.logger.info(f"PIR monitor started (timeout: {settings.pir_no_motion_timeout}s)")
+
+    def _pir_monitor_loop(self) -> None:
+        """
+        PIR monitoring loop (runs in separate thread).
+
+        Waits for no-motion timeout, then auto-disarms the system.
+        """
+        try:
+            timeout = settings.pir_no_motion_timeout
+            self.logger.info(f"Monitoring for {timeout}s of no motion...")
+
+            # Wait for timeout or stop signal
+            if self.pir_monitor_stop_event.wait(timeout=timeout):
+                # Stop event was set (motion detected or manual stop)
+                self.logger.info("PIR monitor: Motion detected or stopped - restarting timer")
+                return
+
+            # Timeout elapsed - no motion detected
+            if self.pir_sensor:
+                time_since_motion = self.pir_sensor.time_since_last_motion()
+                if time_since_motion and time_since_motion >= timeout:
+                    self.logger.info(f"PIR auto-disarm: No motion for {timeout}s - disarming system")
+
+                    # Auto-disarm
+                    if self.state == SystemState.ARMED:
+                        # Beep to indicate disarming
+                        if self.buzzer:
+                            self.buzzer.beep_pattern(count=2, duration=0.1, pause=0.1)
+
+                        self.disarm()
+                        self.logger.info("✓ System auto-disarmed due to no motion")
+
+        except Exception as e:
+            self.logger.error(f"Error in PIR monitor loop: {e}", exc_info=True)
 
     def _process_detection(
         self,
@@ -678,7 +809,16 @@ class SystemManager:
             },
 
             # Last detection timestamp
-            "last_detection": self.last_detection_time.isoformat() if hasattr(self, 'last_detection_time') and self.last_detection_time else None
+            "last_detection": self.last_detection_time.isoformat() if hasattr(self, 'last_detection_time') and self.last_detection_time else None,
+
+            # Hardware status
+            "hardware": {
+                "led_controller": self.led_controller is not None and self.led_controller.started if self.led_controller else False,
+                "buzzer": self.buzzer is not None and self.buzzer.started if self.buzzer else False,
+                "pir_sensor": self.pir_sensor is not None and self.pir_sensor.started if self.pir_sensor else False,
+                "pir_auto_arm_enabled": settings.pir_auto_arm_enabled if RPI_HARDWARE_AVAILABLE else False,
+                "last_motion_time": self.pir_sensor.get_last_motion_time().isoformat() if self.pir_sensor and self.pir_sensor.get_last_motion_time() else None,
+            }
         }
         return status
 
@@ -741,21 +881,24 @@ class SystemManager:
     def trigger_alarm(self) -> None:
         """
         Trigger alarm (LEDs, buzzer, state change).
+        Red LED + Buzzer pulse alarm when unknown person detected.
         """
         try:
             # Set state to ALARM
             self.state = SystemState.ALARM
-            self.logger.warning("⚠️  ALARM TRIGGERED ⚠️")
+            self.logger.warning("🚨 ALARM TRIGGERED 🚨")
 
-            # Turn on red LED (if available)
+            # Turn on red LED with blinking (if available)
             if self.led_controller:
-                self.led_controller.set_alarm()
+                self.led_controller.set_alarm(blink=True)  # Red LED blinking
+                self.logger.info("✓ Red LED blinking (alarm state)")
 
-            # Activate buzzer (if available)
+            # Activate buzzer pulse alarm (if available)
             if self.buzzer:
-                self.buzzer.pulse()
+                self.buzzer.pulse_alarm(on_time=0.5, off_time=0.5)  # Alternating pattern
+                self.logger.info("✓ Buzzer pulse alarm activated")
 
-            self.logger.info("Alarm activated: LEDs and buzzer triggered")
+            self.logger.info("Alarm activated: Red LED blinking + Buzzer pulsing")
 
         except Exception as e:
             self.logger.error(f"Error triggering alarm: {e}", exc_info=True)
@@ -772,12 +915,14 @@ class SystemManager:
             # Stop red LED, return to green
             if self.led_controller:
                 self.led_controller.set_armed()
+                self.logger.info("✓ Green LED ON (returned to armed)")
 
             # Stop buzzer
             if self.buzzer:
-                self.buzzer.stop()
+                self.buzzer.stop_alarm()
+                self.logger.info("✓ Buzzer stopped")
 
-            self.logger.info("Alarm cleared: LEDs and buzzer deactivated")
+            self.logger.info("Alarm cleared: System returned to armed state")
 
         except Exception as e:
             self.logger.error(f"Error clearing alarm: {e}", exc_info=True)
@@ -833,12 +978,24 @@ class SystemManager:
             self.logger.info("Stopping camera...")
             self.camera.stop()
 
-        # Turn off hardware (if available)
+        # Stop PIR monitor thread
+        if self.pir_monitor_thread and self.pir_monitor_thread.is_alive():
+            self.logger.info("Stopping PIR monitor thread...")
+            self.pir_monitor_stop_event.set()
+            self.pir_monitor_thread.join(timeout=2.0)
+
+        # Stop and cleanup hardware (if available)
         if self.led_controller:
-            self.led_controller.turn_off_all()
-        
+            self.logger.info("Stopping LED Controller...")
+            self.led_controller.stop()
+
         if self.buzzer:
+            self.logger.info("Stopping Buzzer...")
             self.buzzer.stop()
+
+        if self.pir_sensor:
+            self.logger.info("Stopping PIR Sensor...")
+            self.pir_sensor.stop()
 
         if self.logger:
             self.logger.info("✓ System shutdown complete")

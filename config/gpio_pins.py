@@ -53,15 +53,15 @@ class GPIOPins:
         - Use default values if not specified
         - Store in instance variables
         """
-        # PIR Motion Sensor
-        self.PIR_PIN: int = int(os.getenv("PIR_PIN", "18"))
+        # PIR Motion Sensor (GPIO 24, Physical Pin 18)
+        self.PIR_PIN: int = int(os.getenv("PIR_PIN", "24"))
 
         # LED Indicators
-        self.LED_RED_PIN: int = int(os.getenv("LED_RED_PIN", "17"))
-        self.LED_GREEN_PIN: int = int(os.getenv("LED_GREEN_PIN", "27"))
+        self.LED_RED_PIN: int = int(os.getenv("LED_RED_PIN", "17"))  # Physical Pin 11
+        self.LED_GREEN_PIN: int = int(os.getenv("LED_GREEN_PIN", "27"))  # Physical Pin 13
 
-        # Buzzer
-        self.BUZZER_PIN: int = int(os.getenv("BUZZER_PIN", "22"))
+        # Buzzer (GPIO 23, Physical Pin 16)
+        self.BUZZER_PIN: int = int(os.getenv("BUZZER_PIN", "23"))
 
     def _validate_pins(self) -> None:
         """

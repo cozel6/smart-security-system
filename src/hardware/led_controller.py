@@ -86,41 +86,42 @@ class LEDController:
     def start(self) -> None:
         """
         Initialize GPIO for LED control.
-
-        TODO:
-        - Setup GPIO mode (GPIO.BCM)
-        - Setup both pins as OUTPUT: GPIO.setup(pin, GPIO.OUT)
-        - Set initial state to LOW (LEDs off)
-        - Set started flag to True
-        - Log initialization
         """
-        # TODO: Implement GPIO setup
-        pass
+        try:
+            # Setup GPIO mode
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+
+            # Setup pins as OUTPUT
+            GPIO.setup(self.green_pin, GPIO.OUT)
+            GPIO.setup(self.red_pin, GPIO.OUT)
+
+            # Set initial state to LOW (LEDs off)
+            GPIO.output(self.green_pin, GPIO.LOW)
+            GPIO.output(self.red_pin, GPIO.LOW)
+
+            self.started = True
+            print(f"✓ LED Controller initialized: Green={self.green_pin}, Red={self.red_pin}")
+        except Exception as e:
+            print(f"ERROR: Failed to initialize LED Controller: {e}")
 
     def set_disarmed(self) -> None:
         """
         Set system to DISARMED state (all LEDs off).
-
-        TODO:
-        - Stop any blinking patterns
-        - Turn off both LEDs (GPIO.output LOW)
-        - Update current_state
         """
-        # TODO: Implement disarmed state
-        pass
+        self._stop_blink()
+        GPIO.output(self.green_pin, GPIO.LOW)
+        GPIO.output(self.red_pin, GPIO.LOW)
+        self.current_state = LEDState.DISARMED
 
     def set_armed(self) -> None:
         """
         Set system to ARMED state (green LED on).
-
-        TODO:
-        - Stop any blinking patterns
-        - Turn on green LED (GPIO.output HIGH)
-        - Turn off red LED (GPIO.output LOW)
-        - Update current_state
         """
-        # TODO: Implement armed state
-        pass
+        self._stop_blink()
+        GPIO.output(self.green_pin, GPIO.HIGH)
+        GPIO.output(self.red_pin, GPIO.LOW)
+        self.current_state = LEDState.ARMED
 
     def set_alarm(self, blink: bool = False) -> None:
         """
@@ -128,31 +129,25 @@ class LEDController:
 
         Args:
             blink: If True, blink red LED; if False, solid on
-
-        TODO:
-        - Stop any previous blinking patterns
-        - Turn off green LED
-        - If blink=True:
-            - Start blinking thread for red LED (0.5s on, 0.5s off)
-        - If blink=False:
-            - Turn on red LED solid
-        - Update current_state
         """
-        # TODO: Implement alarm state
-        pass
+        self._stop_blink()
+        GPIO.output(self.green_pin, GPIO.LOW)
+
+        if blink:
+            self._start_blink(self.red_pin, interval=0.5)
+        else:
+            GPIO.output(self.red_pin, GPIO.HIGH)
+
+        self.current_state = LEDState.ALARM
 
     def set_error(self) -> None:
         """
         Set system to ERROR state (red LED fast blinking).
-
-        TODO:
-        - Stop any previous blinking patterns
-        - Turn off green LED
-        - Start fast blinking thread for red LED (0.2s on, 0.2s off)
-        - Update current_state
         """
-        # TODO: Implement error state
-        pass
+        self._stop_blink()
+        GPIO.output(self.green_pin, GPIO.LOW)
+        self._start_blink(self.red_pin, interval=0.2)
+        self.current_state = LEDState.ERROR
 
     def _start_blink(self, pin: int, interval: float = 0.5) -> None:
         """
@@ -161,16 +156,15 @@ class LEDController:
         Args:
             pin: GPIO pin to blink
             interval: Blink interval in seconds
-
-        TODO:
-        - Stop any existing blink thread
-        - Clear stop event
-        - Create new thread that toggles LED state
-        - Thread should check stop_event regularly
-        - Start thread with daemon=True
         """
-        # TODO: Implement blinking thread
-        pass
+        self._stop_blink()
+        self.blink_stop_event.clear()
+        self.blink_thread = threading.Thread(
+            target=self._blink_loop,
+            args=(pin, interval),
+            daemon=True
+        )
+        self.blink_thread.start()
 
     def _blink_loop(self, pin: int, interval: float) -> None:
         """
@@ -179,27 +173,23 @@ class LEDController:
         Args:
             pin: GPIO pin to blink
             interval: Blink interval in seconds
-
-        TODO:
-        - Loop while not stop_event.is_set()
-        - Toggle LED state (HIGH -> LOW -> HIGH)
-        - Sleep for interval
-        - Exit when stop_event is set
         """
-        # TODO: Implement blink loop
-        pass
+        while not self.blink_stop_event.is_set():
+            GPIO.output(pin, GPIO.HIGH)
+            time.sleep(interval)
+            if self.blink_stop_event.is_set():
+                break
+            GPIO.output(pin, GPIO.LOW)
+            time.sleep(interval)
 
     def _stop_blink(self) -> None:
         """
         Stop any active blinking pattern.
-
-        TODO:
-        - Set stop_event to signal thread to stop
-        - Wait for thread to finish (join with timeout)
-        - Set blink_thread to None
         """
-        # TODO: Implement blink stop
-        pass
+        if self.blink_thread and self.blink_thread.is_alive():
+            self.blink_stop_event.set()
+            self.blink_thread.join(timeout=1.0)
+            self.blink_thread = None
 
     def turn_on(self, color: str) -> None:
         """
@@ -207,14 +197,13 @@ class LEDController:
 
         Args:
             color: "green" or "red"
-
-        TODO:
-        - Get appropriate pin based on color
-        - Set GPIO to HIGH
-        - Raise ValueError if invalid color
         """
-        # TODO: Implement direct LED control
-        pass
+        if color.lower() == "green":
+            GPIO.output(self.green_pin, GPIO.HIGH)
+        elif color.lower() == "red":
+            GPIO.output(self.red_pin, GPIO.HIGH)
+        else:
+            raise ValueError(f"Invalid LED color: {color}")
 
     def turn_off(self, color: str) -> None:
         """
@@ -222,40 +211,52 @@ class LEDController:
 
         Args:
             color: "green" or "red"
-
-        TODO:
-        - Get appropriate pin based on color
-        - Set GPIO to LOW
-        - Raise ValueError if invalid color
         """
-        # TODO: Implement direct LED control
-        pass
+        if color.lower() == "green":
+            GPIO.output(self.green_pin, GPIO.LOW)
+        elif color.lower() == "red":
+            GPIO.output(self.red_pin, GPIO.LOW)
+        else:
+            raise ValueError(f"Invalid LED color: {color}")
 
     def all_off(self) -> None:
         """
         Turn off all LEDs.
-
-        TODO:
-        - Stop blinking
-        - Turn off green LED
-        - Turn off red LED
         """
-        # TODO: Implement all off
-        pass
+        self._stop_blink()
+        GPIO.output(self.green_pin, GPIO.LOW)
+        GPIO.output(self.red_pin, GPIO.LOW)
 
     def test_pattern(self) -> None:
         """
         Run test pattern to verify LEDs work.
-
-        TODO:
-        - Blink green LED 3 times
-        - Blink red LED 3 times
-        - Blink both LEDs 3 times
-        - Turn all off
-        - Useful for hardware testing
         """
-        # TODO: Implement test pattern
-        pass
+        print("Testing LED pattern...")
+
+        # Blink green LED 3 times
+        for _ in range(3):
+            GPIO.output(self.green_pin, GPIO.HIGH)
+            time.sleep(0.3)
+            GPIO.output(self.green_pin, GPIO.LOW)
+            time.sleep(0.3)
+
+        # Blink red LED 3 times
+        for _ in range(3):
+            GPIO.output(self.red_pin, GPIO.HIGH)
+            time.sleep(0.3)
+            GPIO.output(self.red_pin, GPIO.LOW)
+            time.sleep(0.3)
+
+        # Blink both LEDs 3 times
+        for _ in range(3):
+            GPIO.output(self.green_pin, GPIO.HIGH)
+            GPIO.output(self.red_pin, GPIO.HIGH)
+            time.sleep(0.3)
+            GPIO.output(self.green_pin, GPIO.LOW)
+            GPIO.output(self.red_pin, GPIO.LOW)
+            time.sleep(0.3)
+
+        print("✓ LED test pattern complete")
 
     def get_state(self) -> LEDState:
         """
@@ -269,15 +270,21 @@ class LEDController:
     def stop(self) -> None:
         """
         Stop LED controller and cleanup GPIO.
-
-        TODO:
-        - Stop any blinking threads
-        - Turn off all LEDs
-        - Cleanup GPIO pins
-        - Set started flag to False
         """
-        # TODO: Implement cleanup
-        pass
+        if not self.started:
+            return
+
+        self._stop_blink()
+        self.all_off()
+
+        # Cleanup GPIO pins
+        try:
+            GPIO.cleanup([self.green_pin, self.red_pin])
+        except:
+            pass
+
+        self.started = False
+        print("✓ LED Controller stopped")
 
     def __enter__(self):
         """Context manager entry."""

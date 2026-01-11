@@ -74,23 +74,30 @@ class PIRSensor:
 
         Args:
             callback: Function to call when motion detected (receives GPIO pin number)
-
-        TODO:
-        - Setup GPIO mode (GPIO.BCM)
-        - Setup pin as input: GPIO.setup(self.pin, GPIO.IN)
-        - Store callback function
-        - Add event detection: GPIO.add_event_detect()
-            - Event: GPIO.RISING (motion starts)
-            - Callback: self._motion_callback
-            - Bouncetime: 200ms (prevent false triggers)
-        - Set started flag to True
-        - Log initialization
-        - Wait for sensor to stabilize (2-3 seconds recommended)
         """
         self.callback = callback
 
-        # TODO: Implement GPIO setup and event detection
-        pass
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+            GPIO.setup(self.pin, GPIO.IN)
+
+            # Add event detection for motion (RISING edge = motion starts)
+            GPIO.add_event_detect(
+                self.pin,
+                GPIO.RISING,
+                callback=self._motion_callback,
+                bouncetime=200
+            )
+
+            self.started = True
+            print(f"✓ PIR Sensor initialized: Pin={self.pin}")
+            print("  Waiting for sensor to stabilize (2 seconds)...")
+            time.sleep(2)
+            print("  ✓ PIR Sensor ready")
+
+        except Exception as e:
+            print(f"ERROR: Failed to initialize PIR Sensor: {e}")
 
     def _motion_callback(self, channel: int) -> None:
         """
@@ -98,15 +105,20 @@ class PIRSensor:
 
         Args:
             channel: GPIO pin number that triggered the interrupt
-
-        TODO:
-        - Update motion_detected flag
-        - Record timestamp of detection
-        - Call user callback if provided
-        - Handle exceptions in callback gracefully (don't crash system)
         """
-        # TODO: Implement motion detection callback
-        pass
+        try:
+            self.motion_detected = True
+            self.last_motion_time = datetime.now()
+            print(f"🔴 MOTION DETECTED! (Pin {channel})")
+
+            # Call user callback if provided
+            if self.callback:
+                try:
+                    self.callback(channel)
+                except Exception as e:
+                    print(f"ERROR in PIR callback: {e}")
+        except Exception as e:
+            print(f"ERROR in _motion_callback: {e}")
 
     def is_motion_detected(self) -> bool:
         """
@@ -114,14 +126,11 @@ class PIRSensor:
 
         Returns:
             bool: True if motion detected, False otherwise
-
-        TODO:
-        - Read current GPIO state: GPIO.input(self.pin)
-        - Return True if HIGH (motion), False if LOW (no motion)
-        - Can be used as alternative to callback approach
         """
-        # TODO: Implement polling read
-        pass
+        try:
+            return GPIO.input(self.pin) == GPIO.HIGH
+        except:
+            return False
 
     def wait_for_motion(self, timeout: Optional[float] = None) -> bool:
         """
@@ -132,15 +141,14 @@ class PIRSensor:
 
         Returns:
             bool: True if motion detected, False if timeout
-
-        TODO:
-        - Use GPIO.wait_for_edge() to wait for RISING edge
-        - Return True if motion detected within timeout
-        - Return False if timeout occurred
-        - Useful for testing or simple blocking operation
         """
-        # TODO: Implement blocking wait
-        pass
+        try:
+            # Convert timeout to milliseconds (None stays None)
+            timeout_ms = int(timeout * 1000) if timeout else None
+            channel = GPIO.wait_for_edge(self.pin, GPIO.RISING, timeout=timeout_ms)
+            return channel is not None
+        except:
+            return False
 
     def get_last_motion_time(self) -> Optional[datetime]:
         """
@@ -161,28 +169,27 @@ class PIRSensor:
 
         Returns:
             Optional[float]: Seconds since last motion, or None if no motion yet
-
-        TODO:
-        - If last_motion_time is None, return None
-        - Calculate current_time - last_motion_time
-        - Return elapsed time in seconds
         """
-        # TODO: Implement time calculation
-        pass
+        if self.last_motion_time is None:
+            return None
+        elapsed = (datetime.now() - self.last_motion_time).total_seconds()
+        return elapsed
 
     def stop(self) -> None:
         """
         Stop PIR sensor and cleanup GPIO.
-
-        TODO:
-        - Remove event detection: GPIO.remove_event_detect(self.pin)
-        - Cleanup GPIO pin: GPIO.cleanup(self.pin)
-        - Set started flag to False
-        - Log shutdown
-        - Handle exceptions if GPIO already cleaned up
         """
-        # TODO: Implement cleanup
-        pass
+        if not self.started:
+            return
+
+        try:
+            GPIO.remove_event_detect(self.pin)
+            GPIO.cleanup(self.pin)
+        except Exception as e:
+            print(f"Warning during PIR cleanup: {e}")
+
+        self.started = False
+        print("✓ PIR Sensor stopped")
 
     def reset(self) -> None:
         """

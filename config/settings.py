@@ -89,6 +89,13 @@ class Settings:
         self.max_snapshots: int = int(os.getenv("MAX_SNAPSHOTS", "100"))
         self.snapshot_retention_days: int = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "7"))
 
+        # PIR Auto-Arm Settings
+        self.pir_auto_arm_enabled: bool = os.getenv("PIR_AUTO_ARM_ENABLED", "True").lower() == "true"
+        self.pir_no_motion_timeout: int = int(os.getenv("PIR_NO_MOTION_TIMEOUT", "120"))  # seconds (2 minutes)
+
+        # Hardware Settings
+        self.use_hardware: bool = os.getenv("USE_HARDWARE", "True").lower() == "true"  # Enable/disable GPIO hardware
+
     def validate(self) -> bool:
         """
         Validate all critical settings.

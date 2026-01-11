@@ -66,16 +66,16 @@ class Buzzer:
     def start(self) -> None:
         """
         Initialize GPIO for buzzer control.
-
-        TODO:
-        - Setup GPIO mode (GPIO.BCM)
-        - Setup pin as OUTPUT: GPIO.setup(self.pin, GPIO.OUT)
-        - Set initial state to LOW (buzzer off)
-        - Set started flag to True
-        - Log initialization
         """
-        # TODO: Implement GPIO setup
-        pass
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+            GPIO.setup(self.pin, GPIO.OUT)
+            GPIO.output(self.pin, GPIO.LOW)
+            self.started = True
+            print(f"✓ Buzzer initialized: Pin={self.pin}")
+        except Exception as e:
+            print(f"ERROR: Failed to initialize Buzzer: {e}")
 
     def beep(self, duration: float = 0.1) -> None:
         """
@@ -83,15 +83,10 @@ class Buzzer:
 
         Args:
             duration: Beep duration in seconds (default 0.1s)
-
-        TODO:
-        - Turn buzzer on (GPIO HIGH)
-        - Sleep for duration
-        - Turn buzzer off (GPIO LOW)
-        - Useful for feedback on button press, etc.
         """
-        # TODO: Implement single beep
-        pass
+        GPIO.output(self.pin, GPIO.HIGH)
+        time.sleep(duration)
+        GPIO.output(self.pin, GPIO.LOW)
 
     def beep_pattern(self, count: int = 3, duration: float = 0.1, pause: float = 0.1) -> None:
         """
@@ -101,40 +96,26 @@ class Buzzer:
             count: Number of beeps
             duration: Duration of each beep in seconds
             pause: Pause between beeps in seconds
-
-        TODO:
-        - Loop count times
-        - For each iteration:
-            - Turn on buzzer
-            - Sleep for duration
-            - Turn off buzzer
-            - Sleep for pause (except after last beep)
-        - Useful for different alert levels (1 beep = info, 3 beeps = warning, etc.)
         """
-        # TODO: Implement beep pattern
-        pass
+        for i in range(count):
+            GPIO.output(self.pin, GPIO.HIGH)
+            time.sleep(duration)
+            GPIO.output(self.pin, GPIO.LOW)
+            if i < count - 1:  # Don't pause after last beep
+                time.sleep(pause)
 
     def on(self) -> None:
         """
         Turn buzzer on continuously.
-
-        TODO:
-        - Set GPIO to HIGH
-        - Buzzer will sound until turned off
         """
-        # TODO: Implement on
-        pass
+        GPIO.output(self.pin, GPIO.HIGH)
 
     def off(self) -> None:
         """
         Turn buzzer off.
-
-        TODO:
-        - Set GPIO to LOW
-        - Stop any alarm patterns
         """
-        # TODO: Implement off
-        pass
+        self.stop_alarm()
+        GPIO.output(self.pin, GPIO.LOW)
 
     def alarm(self, duration: Optional[float] = None) -> None:
         """
@@ -142,17 +123,11 @@ class Buzzer:
 
         Args:
             duration: Alarm duration in seconds (None = continuous until stop)
-
-        TODO:
-        - Turn buzzer on
-        - If duration specified:
-            - Sleep for duration
-            - Turn buzzer off
-        - If duration is None:
-            - Leave buzzer on (must call stop_alarm() to turn off)
         """
-        # TODO: Implement continuous alarm
-        pass
+        GPIO.output(self.pin, GPIO.HIGH)
+        if duration is not None:
+            time.sleep(duration)
+            GPIO.output(self.pin, GPIO.LOW)
 
     def pulse_alarm(self, on_time: float = 0.5, off_time: float = 0.5) -> None:
         """
@@ -161,16 +136,15 @@ class Buzzer:
         Args:
             on_time: Time buzzer is on in each cycle (seconds)
             off_time: Time buzzer is off in each cycle (seconds)
-
-        TODO:
-        - Stop any existing alarm
-        - Clear stop event
-        - Create thread that pulses buzzer (on -> off -> on -> ...)
-        - Start thread with daemon=True
-        - Thread should check stop_event regularly
         """
-        # TODO: Implement pulsing alarm
-        pass
+        self.stop_alarm()
+        self.alarm_stop_event.clear()
+        self.alarm_thread = threading.Thread(
+            target=self._pulse_loop,
+            args=(on_time, off_time),
+            daemon=True
+        )
+        self.alarm_thread.start()
 
     def _pulse_loop(self, on_time: float, off_time: float) -> None:
         """
@@ -179,45 +153,53 @@ class Buzzer:
         Args:
             on_time: Duration buzzer is on
             off_time: Duration buzzer is off
-
-        TODO:
-        - Loop while not alarm_stop_event.is_set()
-        - Turn buzzer on
-        - Sleep for on_time (or until stop event)
-        - Turn buzzer off
-        - Sleep for off_time (or until stop event)
-        - Exit when stop event is set
         """
-        # TODO: Implement pulse loop
-        pass
+        while not self.alarm_stop_event.is_set():
+            GPIO.output(self.pin, GPIO.HIGH)
+            if self.alarm_stop_event.wait(timeout=on_time):
+                break
+            GPIO.output(self.pin, GPIO.LOW)
+            if self.alarm_stop_event.wait(timeout=off_time):
+                break
 
     def stop_alarm(self) -> None:
         """
         Stop any active alarm pattern.
-
-        TODO:
-        - Set stop event to signal thread to stop
-        - Wait for thread to finish (join with timeout)
-        - Turn buzzer off
-        - Set alarm_thread to None
         """
-        # TODO: Implement alarm stop
-        pass
+        if self.alarm_thread and self.alarm_thread.is_alive():
+            self.alarm_stop_event.set()
+            self.alarm_thread.join(timeout=1.0)
+            self.alarm_thread = None
+        GPIO.output(self.pin, GPIO.LOW)
 
     def test(self) -> None:
         """
         Run test sequence to verify buzzer works.
-
-        TODO:
-        - Single beep
-        - Three beeps pattern
-        - Short continuous alarm (1 second)
-        - Pulse alarm (3 pulses)
-        - Turn off
-        - Useful for hardware testing
         """
-        # TODO: Implement test sequence
-        pass
+        print("Testing buzzer...")
+
+        # Single beep
+        print("  - Single beep")
+        self.beep(0.1)
+        time.sleep(0.5)
+
+        # Three beeps pattern
+        print("  - Three beeps pattern")
+        self.beep_pattern(3, 0.1, 0.2)
+        time.sleep(0.5)
+
+        # Short continuous alarm
+        print("  - Continuous alarm (1 second)")
+        self.alarm(duration=1.0)
+        time.sleep(0.5)
+
+        # Pulse alarm
+        print("  - Pulse alarm (3 seconds)")
+        self.pulse_alarm(0.3, 0.3)
+        time.sleep(3.0)
+        self.stop_alarm()
+
+        print("✓ Buzzer test complete")
 
     def is_sounding(self) -> bool:
         """
@@ -225,26 +207,29 @@ class Buzzer:
 
         Returns:
             bool: True if buzzer is sounding, False otherwise
-
-        TODO:
-        - Read GPIO state
-        - Return True if HIGH, False if LOW
         """
-        # TODO: Implement status check
-        pass
+        try:
+            return GPIO.input(self.pin) == GPIO.HIGH
+        except:
+            return False
 
     def stop(self) -> None:
         """
         Stop buzzer and cleanup GPIO.
-
-        TODO:
-        - Stop any alarm patterns
-        - Turn off buzzer
-        - Cleanup GPIO pin
-        - Set started flag to False
         """
-        # TODO: Implement cleanup
-        pass
+        if not self.started:
+            return
+
+        self.stop_alarm()
+        GPIO.output(self.pin, GPIO.LOW)
+
+        try:
+            GPIO.cleanup(self.pin)
+        except:
+            pass
+
+        self.started = False
+        print("✓ Buzzer stopped")
 
     def __enter__(self):
         """Context manager entry."""
