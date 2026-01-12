@@ -30,6 +30,7 @@ Usage:
     bot.stop()
 """
 
+import cv2
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, ContextTypes
 import io
@@ -51,23 +52,13 @@ class TelegramBot:
     def __init__(self, token: Optional[str] = None, chat_id: Optional[str] = None):
         """
         Initialize Telegram bot.
-
-        Args:
-            token: Bot token from BotFather (default from settings)
-            chat_id: Authorized chat ID (default from settings)
-
-        TODO:
-        - Load token and chat_id from settings if not provided
-        - Initialize bot application
-        - Register command handlers
-        - Initialize callback storage for system control
         """
         self.token = token or settings.telegram_bot_token
         self.chat_id = chat_id or settings.telegram_chat_id
 
         self.application = None
         self.bot = None
-
+        self.loop = None
         # Callbacks for system control (will be set by SystemManager)
         self.on_arm_callback = None
         self.on_disarm_callback = None
@@ -81,8 +72,9 @@ class TelegramBot:
         import asyncio
 
         # Create event loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        loop = self.loop # # Keep local variable for compatibility
 
         # Create Application
         self.application = Application.builder().token(self.token).build()
@@ -416,9 +408,19 @@ class TelegramBot:
         """
         Send plain text message.
         """
+
+        # fix
         try:
             import asyncio
-            asyncio.run(self.bot.send_message(chat_id=self.chat_id, text=text))
+            loop = self.loop
+            if loop and loop.is_running():
+                # We're in the bot thread - schedule coroutine
+                asyncio.run_coroutine_threadsafe(
+                    self.bot.send_message(chat_id=self.chat_id, text=text),
+                    loop
+                )
+            else:
+                self.logger.error("Telegram bot loop not available")
         except Exception as e:
             print(f"Error sending message: {e}")
 
@@ -426,31 +428,34 @@ class TelegramBot:
         """
         Send photo with optional caption.
         """
+        # fix
         try:
-            # Validate frame
-            if frame is None or not isinstance(frame, np.ndarray):
-                raise ValueError("Invalid frame")
+            # Convert frame to JPEG
+            success, encoded_frame = cv2.imencode('.jpg', frame)
+            if not success:
+                print("Error encoding frame to JPEG")
+                return
+            
+            # Create BytesIO object
+            bio = io.BytesIO(encoded_frame.tobytes())
+            bio.seek(0)
+            bio.name = 'snapshot.jpg'
 
-            # Use existing helper for BGR→RGB→PIL conversion
-            from src.utils.helpers import frame_to_pil
-            pil_image = frame_to_pil(frame)
-
-            # Convert to BytesIO for upload
-            bio = io.BytesIO()
-            pil_image.save(bio, format='JPEG', quality=85)
-            bio.seek(0)  # CRITICAL: reset position
-
-            # Send using asyncio.run (same pattern as send_message)
             import asyncio
-            asyncio.run(
-                self.bot.send_photo(
-                    chat_id=self.chat_id,
-                    photo=bio,
-                    caption=caption or None
+            loop = self.loop
+            if loop and loop.is_running():
+                # Use run_coroutine_threadsafe to send from different thread
+                asyncio.run_coroutine_threadsafe(
+                    self.bot.send_photo(
+                        chat_id=self.chat_id,
+                        photo=bio,
+                        caption=caption or None
+                    ),
+                    loop
                 )
-            )
-
-        except Exception as e:
+            else:
+                self.logger.error("Telegram bot loop not available")
+        except Exception as e :
             print(f"Error sending photo: {e}")
 
     def _is_authorized(self, chat_id: int) -> bool:
@@ -529,20 +534,32 @@ class TelegramBot:
         """
         Stop Telegram bot.
         """
-        if self.application:
+        if self.application and hasattr(self, 'loop'):
             print("Stopping Telegram bot...")
             import asyncio
 
             # Get the event loop for this thread
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
+
+                # Schedule stop tasks in the bot's event loop
+                async def shutdown():  
+
                     # Stop the updater and application
-                    loop.run_until_complete(self.application.updater.stop())
-                    loop.run_until_complete(self.application.stop())
-                    loop.run_until_complete(self.application.shutdown())
+                    await self.application.updater.stop()
+                    await self.application.stop()
+                    await self.application.shutdown()
+
+                    #Run shutdown in the bot's event loop
+                    future = asyncio.run_coroutine_threadsafe(
+                        shutdown(),
+                        self.loop
+                    )
+
+                    future.result(timeout=10)
+
                     # Stop the event loop
-                    loop.stop()
+                    self.loop.call_soon_threadsafe(self.loop.stop)
+
             except Exception as e:
                 print(f"Error stopping bot: {e}")
 

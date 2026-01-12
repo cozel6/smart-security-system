@@ -217,20 +217,21 @@ class YOLODetector:
             # Get the first result (single image inference)
             result = results[0]
 
-            # Extract boxesm classes and confidence
+            # Extract boxes, classes and confidence
             if result.boxes is not None and len(result.boxes) > 0:
-                boxes = result.boxes.xyxy.cpu().numpy()  # [x1, y1, x2, y2]
-                classes = result.boxes.cls.cpu().numpy() # Class Ids
-                confidence = result.boxes.conf.cpu().numpy() # Confidence
+                boxes = result.boxes.xyxy.cpu().numpy()
+                classes = result.boxes.cls.cpu().numpy()
+                confidences = result.boxes.conf.cpu().numpy()
 
                 # Process each detection
                 for i in range(len(boxes)):
                     class_id = int(classes[i])
-                    confidence = float(confidence[i])
+                    conf_score = float(confidences[i])
                     bbox = boxes[i].tolist()
 
                     #Classify detection
                     classification = self._classify_detection(class_id)
+
 
                     # Skip detection that are not person or animal
                     if classification == "other" :
@@ -249,7 +250,7 @@ class YOLODetector:
                     detections.append({
                         'class': class_id,
                         'class_name' : class_name,
-                        'confidence' : confidence,
+                        'confidence' : conf_score,
                         'bbox': bbox,
                         'classification' : classification,
                     })

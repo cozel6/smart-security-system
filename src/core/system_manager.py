@@ -136,6 +136,18 @@ class SystemManager:
         self.face_recognition_results = {}  # {frame_id: result}
         self.face_recognition_lock = threading.Lock()
 
+        # Session tracking for authorized persons (one-time alerts)
+        self.authorized_person_sessions = {} # {person_name: {'first_seen': timestamp, 'last_seen': timestamp, 'alert_sent': bool}}
+        self.session_timeout = 300 # we can change that to 30 sec to 1 min if needed 5 minutes - if person not seen for this long, consider them "gone"
+        self.unknown_person_last_alert = 0
+        self.unknown_person_cooldown = 15  # 15 seconds for unknown persons
+
+        # Unknown person confirmation system
+        self.unknown_person_consecutive_count = 0
+        self.unknown_person_confirmation_threshold = 2  # 2 detecții consecutive
+        self.last_unknown_detection_time = 0
+        self.unknown_confirmation_timeout = 3.0  # 3 secunde
+
         # Alert components
         self.alert_manager = None
         self.telegram_bot = None
@@ -218,6 +230,17 @@ class SystemManager:
 
             self.start_time = time.time()
             self._is_armed = False
+
+            # Rate limiting for Face Recognition
+            self.last_face_recognition_time = 0
+            self.face_recognition_cooldown_authorized = 5.0  # 5 secunde pentru authorized
+            self.face_recognition_cooldown_unknown = 1.0  # 1 secundă pentru unknown
+            self.last_detection_was_authorized = False
+
+            # Animal detection alerts
+            self.last_animal_alert_time = 0
+            self.animal_alert_cooldown = 60.0  # 1 minut între alerte animale
+
             return True
         
         
@@ -281,9 +304,6 @@ class SystemManager:
     def disarm(self) -> bool:
         """
         Disarm the security system.
-
-        Returns:
-            bool: True if disarmed successfully
         """
 
         try:
@@ -311,6 +331,11 @@ class SystemManager:
             if self.pir_sensor:
                 self.pir_sensor.stop()
             
+            # 6. Clear person session tracking (so next arm starts fresh)
+            self.authorized_person_sessions.clear()
+            self.unknown_person_last_alert = 0
+            self.logger.debug("Person session tracking cleared")
+
             self.logger.info("System disarmed successfully")
             return True
         
@@ -328,7 +353,7 @@ class SystemManager:
         self.logger.info("Detection loop started")
 
         # Target FPS for detection (lower than camera FPS)
-        detection_fps = 5 # Run detection at 5 fps
+        detection_fps = 2 # Run detection at 2 fps (reduced for better face recognition accuracy)
         frame_interval = 1.0 / detection_fps
 
         consecutive_empty_frames = 0
@@ -368,62 +393,122 @@ class SystemManager:
                     if detection_result['type'] != DetectionType.NONE:
                         # STAGE 2: If person detected, check if authorized (Face Recognition)
                         if detection_result['person_count'] > 0 and self.face_detector:
-                            self.logger.info("Person detected by YOLO, running Face Recognition in background...")
+                            current_time = time.time()
 
-                            # Run face recognition in BACKGROUND THREAD (non-blocking)
-                            frame_copy = frame.copy()
-                            frame_id = time.time()
-
-                            def run_face_recognition_async():
-                                try:
-                                    # Enable drawing to show names and bounding boxes on frame
-                                    face_result = self.face_detector.detect(frame_copy, draw=True)
-
-                                    # Store result with frame_id
-                                    with self.face_recognition_lock:
-                                        self.face_recognition_results[frame_id] = face_result
-
-                                        # Keep only last 5 results (prevent memory leak)
-                                        if len(self.face_recognition_results) > 5:
-                                            oldest_key = min(self.face_recognition_results.keys())
-                                            del self.face_recognition_results[oldest_key]
-
-                                except Exception as e:
-                                    self.logger.error(f"Face recognition error: {e}")
-
-                            # Start background thread with 3-second timeout
-                            face_thread = threading.Thread(target=run_face_recognition_async, daemon=True)
-                            face_thread.start()
-
-                            # Wait maximum 3 seconds for face recognition result
-                            face_thread.join(timeout=3.0)
-
-                            # Check if result available
-                            with self.face_recognition_lock:
-                                face_result = self.face_recognition_results.get(frame_id)
-
-                            if face_result:
-                                # Update annotated frame with face recognition results (always show names)
-                                face_annotated = face_result.get('frame')
-                                if face_annotated is not None:
-                                    with self.frame_lock:
-                                        self.latest_annotated_frame = face_annotated
-
-                                # Check if authorized person detected
-                                if face_result.get('authorized_person_detected', False):
-                                    authorized_names = face_result.get('authorized_names', [])
-                                    self.logger.info(f"✓ Authorized person detected: {authorized_names} - NO ALERT")
-
-                                    # Skip alert for authorized persons
-                                    continue
-                                else:
-                                    self.logger.warning("⚠ Unknown person detected - TRIGGERING ALERT")
+                            # Determină cooldown-ul bazat pe ultima detecție
+                            if self.last_detection_was_authorized:
+                                cooldown = self.face_recognition_cooldown_authorized  # 5s
                             else:
-                                # Face recognition timeout - draw YOLO results manually
-                                self.logger.warning("Face recognition timeout or failed - using YOLO detection")
-                                yolo_annotated = self._draw_yolo_detections(frame.copy(), detection_result)
-                                with self.frame_lock:
-                                    self.latest_annotated_frame = yolo_annotated
+                                cooldown = self.face_recognition_cooldown_unknown  # 1s
+
+                            # Verifică dacă a trecut timpul de cooldown
+                            time_since_last_fr = current_time - self.last_face_recognition_time
+
+                            if time_since_last_fr >= cooldown:
+                                # Rulează Face Recognition
+                                self.logger.info(f"Person detected, running Face Recognition (cooldown: {cooldown}s)")
+                                self.last_face_recognition_time = current_time
+
+                                # Run face recognition in BACKGROUND THREAD (non-blocking)
+                                frame_copy = frame.copy()
+                                frame_id = time.time()
+
+                                def run_face_recognition_async():
+                                    try:
+                                        # Enable drawing to show names and bounding boxes on frame
+                                        face_result = self.face_detector.detect(frame_copy, draw=True)
+
+                                        # Store result with frame_id
+                                        with self.face_recognition_lock:
+                                            self.face_recognition_results[frame_id] = face_result
+
+                                            # Keep only last 5 results (prevent memory leak)
+                                            if len(self.face_recognition_results) > 5:
+                                                oldest_key = min(self.face_recognition_results.keys())
+                                                del self.face_recognition_results[oldest_key]
+
+                                    except Exception as e:
+                                        self.logger.error(f"Face recognition error: {e}")
+
+                                # Start background thread with 3-second timeout
+                                face_thread = threading.Thread(target=run_face_recognition_async, daemon=True)
+                                face_thread.start()
+
+                                # Wait maximum 3 seconds for face recognition result
+                                face_thread.join(timeout=3.0)
+
+                                # Check if result available
+                                with self.face_recognition_lock:
+                                    face_result = self.face_recognition_results.get(frame_id)
+
+                                if face_result:
+                                    # Update annotated frame with face recognition results (always show names)
+                                    face_annotated = face_result.get('frame')
+                                    if face_annotated is not None:
+                                        with self.frame_lock:
+                                            self.latest_annotated_frame = face_annotated
+
+                                    # Check if authorized person detected
+                                    if face_result.get('authorized_person_detected', False):
+                                        authorized_names = face_result.get('authorized_names', [])
+                                        self.last_detection_was_authorized = True  # Marchează pentru viitor
+                                        self.unknown_person_consecutive_count = 0  # Reset counter
+
+                                        # Check each authorized person's session
+                                        should_alert = False
+                                        for person_name in authorized_names:
+                                            if self._update_person_session(person_name, is_authorized=True):
+                                                should_alert = True
+                                                self.logger.info(f"✓ {person_name} detected - sending ONE-TIME alert")
+                                        # If alert needed, modify detection_result for authorized person alert
+                                        if should_alert:
+                                            # Update detection result to send "trusted person" alert
+                                            detection_result['alert_type'] = 'trusted_person'
+                                            detection_result['alert_message'] = f"{', '.join(authorized_names)} (persoană de încredere) detectat"
+                                        else:
+                                            # Alert already sent in this session - skip
+                                            continue
+                                    else:
+                                        # Unknown person detected
+                                        self.last_detection_was_authorized = False  # Marchează pentru viitor
+                                        current_time = time.time()
+
+                                        # Verifică dacă e consecutiv (< 3s de la ultima detecție)
+                                        time_since_last = current_time - self.last_unknown_detection_time
+
+                                        if time_since_last <= self.unknown_confirmation_timeout:
+                                            self.unknown_person_consecutive_count += 1
+                                        else:
+                                            self.unknown_person_consecutive_count = 1  # Reset
+
+                                        self.last_unknown_detection_time = current_time
+
+                                        # Confirmă doar după 2+ detecții consecutive
+                                        if self.unknown_person_consecutive_count >= self.unknown_person_confirmation_threshold:
+                                            if self._update_person_session("Unknown Person", is_authorized=False):
+                                                self.logger.warning(f"⚠ Unknown CONFIRMED ({self.unknown_person_consecutive_count}) - ALERT")
+                                                detection_result['alert_type'] = 'unknown_person'
+                                                detection_result['alert_message'] = "Persoana necunoscuta detectata"
+                                            else:
+                                                continue
+                                        else:
+                                            self.logger.debug(f"Unknown not confirmed ({self.unknown_person_consecutive_count}/2)")
+                                            continue
+                                else:
+                                    # Face recognition timeout - draw YOLO results manually
+                                    self.logger.warning("Face recognition timeout or failed - using YOLO detection only")
+                                    yolo_annotated = self._draw_yolo_detections(frame.copy(), detection_result)
+                                    with self.frame_lock:
+                                        self.latest_annotated_frame = yolo_annotated
+
+                                    # Skip alert when face recognition fails
+                                    self.logger.info("Skipping alert due to face recognition timeout (no identification made)")
+                                    continue
+                            else:
+                                # Skip Face Recognition, folosește ultimul frame annotat
+                                self.logger.debug(f"Skipping Face Recognition (cooldown: {time_since_last_fr:.1f}/{cooldown}s)")
+                                # Continuă cu ultimul frame annotat, nu face nimic
+                                continue
 
                         # Process detection (triggers alert if not authorized)
                         self._process_detection(frame, detection_result)
@@ -433,6 +518,24 @@ class SystemManager:
                             yolo_annotated = self._draw_yolo_detections(frame.copy(), detection_result)
                             with self.frame_lock:
                                 self.latest_annotated_frame = yolo_annotated
+
+                            # Verifică rate limiting pentru animal alerts
+                            current_time = time.time()
+                            time_since_last_animal_alert = current_time - self.last_animal_alert_time
+
+                            if time_since_last_animal_alert >= self.animal_alert_cooldown:
+                                # Trimite alertă LOW pentru animale
+                                animal_types = set([d['class_name'] for d in detection_result['detections']
+                                                  if d['classification'] == 'animal'])
+
+                                detection_result['alert_type'] = 'animal_detected'
+                                detection_result['alert_message'] = f"Animal detectat: {', '.join(animal_types)}"
+
+                                self.last_animal_alert_time = current_time
+                                self._process_detection(frame, detection_result)
+                            else:
+                                # Cooldown activ - nu trimite alertă
+                                self.logger.debug(f"Animal alert cooldown ({time_since_last_animal_alert:.0f}s / 60s)")
                         else:
                             # No detections at all - show clean frame
                             with self.frame_lock:
@@ -452,6 +555,9 @@ class SystemManager:
                     f"{stats['person_detections']} persons, "
                     f"{stats['animal_detections']} animals"
                 )
+                
+                # Cleanup old sessino periodically
+                self._cleanup_old_sessions()
 
                 # Calculate and store FPS
                 actual_loop_time = time.time() - loop_start_time
@@ -514,8 +620,13 @@ class SystemManager:
             if detection_type == DetectionType.PERSON or detection_type == DetectionType.BOTH:
                 self.logger.warning(f"CRITICAL: Person detected! Count: {person_count}")
 
-                # Trigger alarm
-                self.trigger_alarm()
+                # Get alert metadata (added in detection loop)
+                alert_type = detection_result.get('alert_type','unknown_person')
+                alert_message = detection_result.get('alert_message', 'Person detected')
+                
+                # Trigger the alarm only for unknown persons (not for trusted person)
+                if alert_type != 'trusted_person':
+                    self.trigger_alarm()
 
                 # Save snapshot (with cooldown) in BACKGROUND THREAD
                 current_time = time.time()
@@ -556,18 +667,33 @@ class SystemManager:
                         message=f"Person detected! Count: {person_count}",
                         snapshot_path=snapshot_path
                     )
-                # Send Telegram alert (if bot available)
+                # Send Telegram alert with differentiated message
                 if self.telegram_bot:
-                    self.telegram_bot.send_alert(
-                        f"🚨 CRITICAL ALERT 🚨\n\n"
-                        f"Person detected!\n"
-                        f"Persons: {person_count}\n"
-                        f"Animals: {animal_count}\n"
-                        f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                    )
+                    if alert_type == 'trusted_person':
+                        # Trusted person alert (green checkmark, friendly message)
+                        self.telegram_bot.send_alert(
+                            f"✅ {alert_message}\n\n"
+                            f"Timp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                            frame=frame_copy if snapshot_path else None,
+                            alert_type='info'
+                        )
+                    else:
+                        # Unknown person alert (red alert, critical)
+                        self.telegram_bot.send_alert(
+                            f"🚨 ALERTĂ CRITICĂ 🚨\n\n"
+                            f"{alert_message}\n"
+                            f"Persoane: {person_count}\n"
+                            f"Timp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                            frame=frame_copy if snapshot_path else None,
+                            alert_type='critical'
+                        )
+
                 # Handle ANIMAL-only detection (LOW alert)
             elif detection_type == DetectionType.ANIMAL:
                 self.logger.info(f"Animal detected: {animal_count}")
+
+                # Get animal alert message from detection_result
+                alert_message = detection_result.get('alert_message', f'Animal detectat: {animal_count}')
 
                 # Save snapshot with cooldown (animals have longer cooldown) in BACKGROUND THREAD
                 current_time = time.time()
@@ -575,7 +701,7 @@ class SystemManager:
                 if current_time - self.last_animal_snapshot_time >= animal_cooldown:
                     frame_copy = frame.copy()  # Prevent race conditions
                     self.last_animal_snapshot_time = current_time  # Update BEFORE thread starts
-                    
+
                     def save_animal_snapshot_async():
                         nonlocal snapshot_path
                         try:
@@ -593,12 +719,21 @@ class SystemManager:
 
                         except Exception as e:
                             self.logger.error(f"Failed to save snapshot: {e}")
-                    
+
                     # Run in background thread
                     threading.Thread(target=save_animal_snapshot_async, daemon=True).start()
                 else:
                     remaining = animal_cooldown - (current_time - self.last_animal_snapshot_time)
                     self.logger.debug(f"Animal snapshot skipped (cooldown: {remaining:.1f}s remaining)")
+
+                # Send Telegram alert for animals (LOW priority)
+                if self.telegram_bot:
+                    self.telegram_bot.send_alert(
+                        f"🐾 {alert_message}\n\n"
+                        f"Timp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                        frame=frame_copy if snapshot_path else None,
+                        alert_type='low'
+                    )
         except Exception as e:
             self.logger.error(f"Error processing detection: {e}", exc_info=True)
 
@@ -663,6 +798,76 @@ class SystemManager:
             )
 
         return frame
+    
+    def _update_person_session(self, person_name: str, is_authorized: bool) -> bool:
+        """
+        Update person session tracking and determine if alert should be sent.
+        """
+        current_time = time.time()
+        
+        if is_authorized:
+            # Authorized person logic - ONE-TIME ALERT per session
+            if person_name not in self.authorized_person_sessions:
+                # First time seeing this person - create new session
+                self.authorized_person_sessions[person_name] = {
+                    'first_seen': current_time,
+                    'last_seen': current_time,
+                    'alert_sent': False
+                }
+                self.logger.info(f"New session started for {person_name}")
+            else:
+                # Update existing session
+                session = self.authorized_person_sessions[person_name]
+                time_since_last_seen = current_time - session['last_seen']
+                
+                # Check if session expired (person left and came back)
+                if time_since_last_seen > self.session_timeout:
+                    # Session expired - reset for new session
+                    self.logger.info(f"Session expired for {person_name} (gone for {time_since_last_seen:.0f}s), starting new session")
+                    session['first_seen'] = current_time
+                    session['alert_sent'] = False
+                
+                # Update last_seen timestamp
+                session['last_seen'] = current_time
+            
+            # Determine if alert should be sent
+            session = self.authorized_person_sessions[person_name]
+            if not session['alert_sent']:
+                # Send alert only once per session
+                session['alert_sent'] = True
+                return True
+            else:
+                # Already sent alert in this session
+                return False
+                
+        else:
+            # Unknown person logic - REPEATED ALERTS with 30s cooldown (existing behavior)
+            time_since_last_alert = current_time - self.unknown_person_last_alert
+            
+            if time_since_last_alert >= self.unknown_person_cooldown:
+                self.unknown_person_last_alert = current_time
+                return True
+            else:
+                self.logger.debug(f"Unknown person alert suppressed (cooldown: {self.unknown_person_cooldown - time_since_last_alert:.1f}s remaining)")
+                return False
+
+    def _cleanup_old_sessions(self) -> None:
+        """
+        Remove expired sessions from memory (housekeeping).
+        Call this periodically to prevent memory leak.
+        """
+        current_time = time.time()
+        expired_sessions = []
+
+        for person_name, session in self.authorized_person_sessions.items():
+            time_since_last_seen = current_time - session['last_seen']
+            if time_since_last_seen > self.session_timeout * 2: # Double timeout for cleanup
+                expired_sessions.append(person_name)
+        
+        for person_name in expired_sessions:
+            del self.authorized_person_sessions[person_name]
+            self.logger.debug(f"Cleaned up expired session for {person_name}")
+        
 
     def get_status(self) -> dict:
         """Get current system status with proper format for dashboard."""
@@ -855,6 +1060,14 @@ class SystemManager:
             self.logger.info("Stopping Flask server...")
             self.flask_server.stop()
 
+        # Stop Telegram Bot
+        if self.telegram_bot:
+            self.logger.info("Stopping Telegram Bot...")
+            self.telegram_bot.stop()
+            # Wait for telegram thread to finish
+            if self.telegram_bot and self.telegram_thread.is_alive():
+                self.telegram_thread.join(timeout=5)
+            
         # Stop YOLO detector
         if self.yolo_detector:
             self.logger.info("Stopping YOLO detector...")
