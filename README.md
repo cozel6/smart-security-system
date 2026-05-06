@@ -209,7 +209,7 @@ wget https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5n.pt
 
 **Developers:**
 - **Cosmin** - [@cozel6](https://github.com/cozel6)
-- **Daniel** - [@CrazyRacc](https://github.com/CrazyRacc)
+- **Daniel** - [@danielbuilds27](https://github.com/danielbuilds27)
 
 **Timeline:** October 2024 - January 2025 (12 weeks)
 **Institution:** MIPE Faculty Project
